@@ -1,6 +1,7 @@
 import type { GpsActivityType } from '@/db/schema';
 
 import { GPS_SETTINGS, MAX_SPEED_MPS, STOP_SPEED_MPS } from './config';
+import { elevationChange } from './elevation';
 import { haversineMeters, paceSecondsPerKm } from './geo';
 import { activeMsAt, isPausedAt, pausedMsBetween } from './pauses';
 import type { PauseInterval, TrackPoint } from './types';
@@ -58,6 +59,9 @@ export type WorkoutTrack = {
   segments: PathPoint[][];
   /** Auto-pause has stopped the clock right now (the latest fixes are a stop). */
   endsStopped: boolean;
+  /** Climbing and descending, from smoothed GPS altitude (0 if the phone gave none). */
+  elevationGainM: number;
+  elevationLossM: number;
   diagnostics: TrackDiagnostics;
 };
 
@@ -184,6 +188,14 @@ export function analyzeTrack({
 
   const movingMs = Math.max(0, activeMsAt(endAt, startedAt, pauses) - autoPausedMs);
 
+  let elevationGainM = 0;
+  let elevationLossM = 0;
+  for (const segment of filtered) {
+    const change = elevationChange(segment.map((point) => point.alt));
+    elevationGainM += change.gainM;
+    elevationLossM += change.lossM;
+  }
+
   return {
     distanceM,
     movingMs,
@@ -191,6 +203,8 @@ export function analyzeTrack({
     averagePaceSecPerKm: paceSecondsPerKm(distanceM, movingMs),
     segments,
     endsStopped,
+    elevationGainM,
+    elevationLossM,
     diagnostics: {
       pointCount: points.length,
       keptCount: filtered.reduce((sum, segment) => sum + segment.length, 0),

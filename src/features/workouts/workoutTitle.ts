@@ -1,10 +1,6 @@
 import type { ActivityType } from '@/db/schema';
 
-const ACTIVITY_WORD: Record<ActivityType, string> = {
-  run: 'run',
-  walk: 'walk',
-  strength: 'workout',
-};
+import { ACTIVITY_DISPLAY } from './activities';
 
 /** "Morning run", "Evening walk", "Afternoon workout"… based on the local hour it started. */
 export function defaultWorkoutTitle(activity: ActivityType, startedAt: number): string {
@@ -14,5 +10,5 @@ export function defaultWorkoutTitle(activity: ActivityType, startedAt: number): 
   else if (hour >= 12 && hour < 17) partOfDay = 'Afternoon';
   else if (hour >= 17 && hour < 21) partOfDay = 'Evening';
   else partOfDay = 'Night';
-  return `${partOfDay} ${ACTIVITY_WORD[activity]}`;
+  return `${partOfDay} ${ACTIVITY_DISPLAY[activity].word}`;
 }

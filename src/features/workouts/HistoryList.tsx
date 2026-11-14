@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import {
   ScrollView,
   SectionList,
@@ -18,18 +18,22 @@ import {
   DATE_RANGES,
   type DateRange,
   toWorkoutFilter,
-} from '@/features/workouts/filters';
-import { useWorkoutList, useWorkoutTotals } from '@/features/workouts/useWorkouts';
-import { groupByWeek, type WeekSection } from '@/features/workouts/weeks';
-import type { WorkoutListItem } from '@/features/workouts/workoutRepository';
-import { WorkoutRow } from '@/features/workouts/WorkoutRow';
+} from './filters';
+import { useWorkoutList, useWorkoutTotals } from './useWorkouts';
+import { groupByWeek, type WeekSection } from './weeks';
+import type { WorkoutListItem } from './workoutRepository';
+import { WorkoutRow } from './WorkoutRow';
 import { currentWeekKey } from '@/lib/dates';
 import { formatTotals } from '@/lib/format';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 type Section = WeekSection<WorkoutListItem>;
 
-export default function HistoryScreen() {
+/**
+ * Every finished workout, grouped by week, with filters. `top` is shown above
+ * the filters (the Progress tab puts its view switcher there).
+ */
+export function HistoryList({ top }: { top?: ReactNode }) {
   const { distanceUnit: unit, weightUnit } = useProfile();
   const [activity, setActivity] = useState<ActivityFilter>('all');
   const [range, setRange] = useState<DateRange>('all');
@@ -76,6 +80,7 @@ export default function HistoryScreen() {
 
   const header = (
     <View style={styles.filters}>
+      {top}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

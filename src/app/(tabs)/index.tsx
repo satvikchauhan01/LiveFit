@@ -11,6 +11,7 @@ import { Screen } from '@/components/Screen';
 import { useProfile } from '@/features/profile/profileStore';
 import { formatVolume } from '@/features/strength/strengthFormat';
 import { startStrengthWorkout } from '@/features/strength/startStrengthWorkout';
+import { GoalsCard, PlanCard } from '@/features/progress/HomeCards';
 import { useActiveSession } from '@/features/workouts/activeSession';
 import { ACTIVITY_DISPLAY } from '@/features/workouts/activities';
 import { useWorkoutList } from '@/features/workouts/useWorkouts';
@@ -142,6 +143,9 @@ export default function HomeScreen() {
         </View>
       </Card>
 
+      <PlanCard disabled={active !== null} />
+      <GoalsCard />
+
       {!active && (
         <View style={styles.quickStart}>
           <Button
@@ -170,7 +174,7 @@ export default function HomeScreen() {
               variant="label"
               tone="accent"
               accessibilityRole="link"
-              onPress={() => router.navigate('/history')}
+              onPress={() => router.navigate('/progress')}
             >
               See all
             </AppText>

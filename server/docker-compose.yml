@@ -1,0 +1,16 @@
+# A local Postgres for development: `docker compose up -d` in this folder.
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: livefit
+      POSTGRES_PASSWORD: livefit
+      POSTGRES_DB: livefit
+    ports:
+      - '5432:5432'
+    volumes:
+      - livefit-db:/var/lib/postgresql/data
+
+volumes:
+  livefit-db:

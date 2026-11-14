@@ -9,6 +9,7 @@ import { Card } from '@/components/Card';
 import { Icon, type IconName } from '@/components/Icon';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { StatTile } from '@/components/StatTile';
+import { LiveShareButton } from '@/features/live/LiveShareButton';
 import { useProfile } from '@/features/profile/profileStore';
 import { analyzeLive, useRecorderStore } from '@/features/recorder/recorderStore';
 import { GpsBadge } from '@/features/tracking/GpsBadge';
@@ -18,12 +19,12 @@ import { currentPaceSecPerKm } from '@/features/tracking/pipeline';
 import { computeLaps, computeSplits } from '@/features/tracking/splits';
 import { TrackMap } from '@/features/tracking/TrackMap';
 import { ACTIVITY_DISPLAY } from '@/features/workouts/activities';
+import { rateLabel, rateValue } from '@/features/workouts/rateDisplay';
 import {
   DISTANCE_UNIT_NAME,
   formatClockTime,
   formatDistanceValue,
   formatDuration,
-  formatPaceValue,
 } from '@/lib/format';
 import { metersPerUnit } from '@/lib/units';
 import { useNow } from '@/lib/useNow';
@@ -78,6 +79,7 @@ export default function RecordingScreen() {
   const lapTimes = laps.map((item) => item.t);
   const currentLap = computeLaps(track, lapTimes)[lapTimes.length];
   const unitName = DISTANCE_UNIT_NAME[unit];
+  const measure = ACTIVITY_DISPLAY[workout.type].measure;
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -185,10 +187,13 @@ export default function RecordingScreen() {
               </AppText>
             </View>
             <View style={styles.row}>
-              <StatTile label={`Pace /${unit}`} value={formatPaceValue(currentPace, unit)} />
               <StatTile
-                label={`Avg pace /${unit}`}
-                value={formatPaceValue(track.averagePaceSecPerKm, unit)}
+                label={rateLabel(unit, measure)}
+                value={rateValue(currentPace, unit, measure)}
+              />
+              <StatTile
+                label={rateLabel(unit, measure, true)}
+                value={rateValue(track.averagePaceSecPerKm, unit, measure)}
               />
             </View>
             <View style={styles.row}>
@@ -212,10 +217,15 @@ export default function RecordingScreen() {
             <View style={styles.row}>
               <StatTile label="Time" value={formatDuration(track.movingMs)} />
               <StatTile label={unit} value={formatDistanceValue(track.distanceM, unit)} />
-              <StatTile label={`Pace /${unit}`} value={formatPaceValue(currentPace, unit)} />
+              <StatTile
+                label={rateLabel(unit, measure)}
+                value={rateValue(currentPace, unit, measure)}
+              />
             </View>
           </>
         )}
+
+        <LiveShareButton workoutId={workout.id} activity={workout.type} />
       </ScrollView>
 
       <View style={styles.controls}>

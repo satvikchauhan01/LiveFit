@@ -6,6 +6,8 @@ import { Alert, Linking, Platform, StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { Card } from '@/components/Card';
+import { AccountCard } from '@/features/account/AccountCard';
+import { ProCard } from '@/features/pro/ProCard';
 import { Chip } from '@/components/Chip';
 import { ListRow } from '@/components/ListRow';
 import { Screen } from '@/components/Screen';
@@ -189,6 +191,9 @@ export default function ProfileScreen() {
         <AppText variant="title">{profile.displayName || 'Your profile'}</AppText>
       </View>
 
+      <AccountCard />
+      <ProCard />
+
       <Card>
         <TextField
           label="Name"
@@ -341,6 +346,18 @@ export default function ProfileScreen() {
             onPress={handleExactTimingPress}
           />
         )}
+      </Card>
+
+      <Card>
+        <AppText variant="label" tone="muted">
+          Privacy
+        </AppText>
+        <SwitchRow
+          title="Share anonymous usage stats"
+          subtitle="Which features get used, never your workouts or location"
+          value={profile.analyticsEnabled}
+          onValueChange={(analyticsEnabled) => update({ analyticsEnabled })}
+        />
       </Card>
 
       <Card>

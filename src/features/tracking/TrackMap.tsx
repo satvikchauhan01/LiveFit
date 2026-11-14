@@ -1,7 +1,8 @@
 import { colors } from '@/theme/tokens';
 
 import { lastPathPoint, type WorkoutTrack } from './pipeline';
-import { type RouteMarker, RoutePreview } from './RoutePreview';
+import type { RouteMarker } from './RoutePreview';
+import { RouteMap } from './RouteMap';
 
 type Props = {
   track: WorkoutTrack;
@@ -31,10 +32,11 @@ export function TrackMap({ track, height, live = false }: Props) {
   }
 
   return (
-    <RoutePreview
+    <RouteMap
       lines={lines}
       markers={markers}
       height={height}
+      follow={live}
       emptyText={live ? 'Waiting for a GPS fix…' : 'No route was recorded.'}
     />
   );

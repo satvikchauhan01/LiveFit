@@ -31,6 +31,10 @@ export const profile = sqliteTable('profile', {
   reminderMinutes: integer('reminder_minutes')
     .notNull()
     .default(18 * 60),
+  /** Send anonymous usage events (feature names only) to help improve the app. */
+  analyticsEnabled: integer('analytics_enabled', { mode: 'boolean' }).notNull().default(true),
+  /** Changed since the last upload to the server. */
+  dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
@@ -38,7 +42,7 @@ export const profile = sqliteTable('profile', {
 export type Profile = typeof profile.$inferSelect;
 
 /** Activities recorded with GPS. */
-export const GPS_ACTIVITY_TYPES = ['run', 'walk'] as const;
+export const GPS_ACTIVITY_TYPES = ['run', 'walk', 'cycle', 'hike', 'wheelchair'] as const;
 export type GpsActivityType = (typeof GPS_ACTIVITY_TYPES)[number];
 
 export const ACTIVITY_TYPES = [...GPS_ACTIVITY_TYPES, 'strength'] as const;
@@ -58,8 +62,12 @@ export const workouts = sqliteTable(
     /** UUID made on the device, so it stays the same once synced to a server. */
     id: text('id').primaryKey(),
     type: text('type', { enum: ACTIVITY_TYPES }).notNull(),
-    /** 'gps' for recorded runs and walks; 'manual' for sessions logged by hand (strength). */
-    source: text('source', { enum: ['gps', 'manual'] })
+    /**
+     * 'gps' recorded live with GPS; 'logged' a strength workout logged set by set;
+     * 'manual' typed in afterwards; 'import' from a GPX file. Leaderboards trust
+     * the first two more than the others.
+     */
+    source: text('source', { enum: ['gps', 'logged', 'manual', 'import'] })
       .notNull()
       .default('gps'),
     status: text('status', { enum: ['active', 'finished'] }).notNull(),
@@ -84,12 +92,27 @@ export const workouts = sqliteTable(
     /** Battery level (0–1) at start and finish, to measure battery use per hour. */
     batteryStart: real('battery_start'),
     batteryEnd: real('battery_end'),
+    /** Climbing during the workout, from smoothed GPS altitude. */
+    elevationGainM: real('elevation_gain_m'),
+    /** Estimated calories (MET × weight × hours); always shown as an estimate. */
+    caloriesEst: real('calories_est'),
+    /** Who can see this workout once community features are on. */
+    visibility: text('visibility', { enum: ['only_me', 'followers', 'club', 'public'] })
+      .notNull()
+      .default('only_me'),
+    /** Extra computed values as JSON, e.g. best efforts: {"bestEfforts": {"5000": 1520000}}. */
+    extras: text('extras').notNull().default('{}'),
+    /** Changed since the last upload to the server. */
+    dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
+    /** Deleted on this phone; kept until the server has heard about it. */
+    deletedAt: integer('deleted_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [
     index('workouts_status_idx').on(table.status),
     index('workouts_started_at_idx').on(table.startedAt),
+    index('workouts_dirty_idx').on(table.dirty),
   ],
 );
 
@@ -189,6 +212,10 @@ export const exercises = sqliteTable(
     logType: text('log_type', { enum: LOG_TYPES }).notNull(),
     isCustom: integer('is_custom', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull(),
+    /** Custom exercises only: last edit, for syncing. */
+    updatedAt: integer('updated_at').notNull().default(0),
+    deletedAt: integer('deleted_at'),
+    dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
   },
   (table) => [index('exercises_name_idx').on(table.name)],
 );
@@ -223,3 +250,70 @@ export const strengthSets = sqliteTable(
 );
 
 export type StrengthSet = typeof strengthSets.$inferSelect;
+
+/** Small key/value settings for the sync engine (pull cursor, last sync time). */
+export const syncState = sqliteTable('sync_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});
+
+// --- Goals, routines and plans (Release 2) -------------------------------------------
+// Each of these syncs as a small document, so they carry updatedAt / deletedAt / dirty.
+
+export const GOAL_KINDS = [
+  'workouts_week',
+  'distance_week',
+  'distance_month',
+  'duration_week',
+  'lift',
+] as const;
+export type GoalKind = (typeof GOAL_KINDS)[number];
+
+export const goals = sqliteTable('goals', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: GOAL_KINDS }).notNull(),
+  /** Workouts, metres, seconds, or kg (a lift goal), depending on the kind. */
+  target: real('target').notNull(),
+  /** Distance goals can be for one activity (e.g. only rides); null = all cardio. */
+  activityType: text('activity_type'),
+  /** Lift goals: which exercise. */
+  exerciseId: text('exercise_id'),
+  /** The period (week/month key, or "done" for lifts) a "goal reached" alert was sent for. */
+  lastAchievedPeriod: text('last_achieved_period'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at'),
+  dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
+});
+
+export type Goal = typeof goals.$inferSelect;
+
+/** A saved strength workout to repeat: exercises with target sets, reps and weight. */
+export const routines = sqliteTable('routines', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** JSON: [{ exerciseId, sets, reps, weightKg, durationS }]. */
+  items: text('items').notNull().default('[]'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at'),
+  dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
+});
+
+export type Routine = typeof routines.$inferSelect;
+
+/** Following a training plan (Couch to 5K, beginner strength…). One active at a time. */
+export const planEnrollments = sqliteTable('plan_enrollments', {
+  id: text('id').primaryKey(),
+  planId: text('plan_id').notNull(),
+  /** The Monday the plan started, "YYYY-MM-DD". */
+  startWeek: text('start_week').notNull(),
+  /** Set when finished or left. */
+  endedAt: integer('ended_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  deletedAt: integer('deleted_at'),
+  dirty: integer('dirty', { mode: 'boolean' }).notNull().default(false),
+});
+
+export type PlanEnrollment = typeof planEnrollments.$inferSelect;

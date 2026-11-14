@@ -1,6 +1,8 @@
 import * as Crypto from 'expo-crypto';
 import { and, asc, desc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 
+import { notifyLocalChange } from '@/features/sync/changes';
+
 import { db } from '@/db/client';
 import { type Exercise, exercises, type StrengthSet, strengthSets, workouts } from '@/db/schema';
 
@@ -31,6 +33,11 @@ export async function seedBuiltInExercises(): Promise<void> {
     });
 }
 
+export async function getExercise(id: string): Promise<Exercise | null> {
+  const rows = await db.select().from(exercises).where(eq(exercises.id, id));
+  return rows[0] ?? null;
+}
+
 export async function listExercises(): Promise<Exercise[]> {
   return db.select().from(exercises).orderBy(asc(exercises.name));
 }
@@ -56,8 +63,11 @@ export async function createCustomExercise(
       id: Crypto.randomUUID(),
       isCustom: true,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
+      dirty: true,
     })
     .returning();
+  notifyLocalChange();
   return rows[0];
 }
 
@@ -66,13 +76,16 @@ export async function createCustomExercise(
 export type SetValues = Pick<StrengthSet, 'reps' | 'weightKg' | 'durationS'>;
 
 export type NewSet = SetValues &
-  Pick<StrengthSet, 'workoutId' | 'exerciseId' | 'exerciseOrder' | 'setIndex'>;
+  Pick<StrengthSet, 'workoutId' | 'exerciseId' | 'exerciseOrder' | 'setIndex'> & {
+    /** Already done (logged after the fact); new sets are open by default. */
+    completedAt?: number | null;
+  };
 
 export async function insertSets(sets: NewSet[]): Promise<StrengthSet[]> {
   if (sets.length === 0) return [];
   return db
     .insert(strengthSets)
-    .values(sets.map((set) => ({ ...set, completedAt: null })))
+    .values(sets.map((set) => ({ ...set, completedAt: set.completedAt ?? null })))
     .returning();
 }
 
@@ -151,6 +164,7 @@ export async function getLastSets(
       and(
         eq(strengthSets.exerciseId, exerciseId),
         eq(workouts.status, 'finished'),
+        isNull(workouts.deletedAt),
         ne(workouts.id, excludeWorkoutId),
         isNotNull(strengthSets.completedAt),
       ),

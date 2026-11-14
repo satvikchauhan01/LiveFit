@@ -8,16 +8,18 @@ import {
   type WorkoutLap,
   type WorkoutPause,
 } from '@/db/schema';
+import { track as trackEvent } from '@/features/analytics/analytics';
 import { useProfileStore } from '@/features/profile/profileStore';
 import { openPause } from '@/features/tracking/pauses';
+import { bestEfforts } from '@/features/tracking/bestEfforts';
 import { analyzeTrack, type WorkoutTrack } from '@/features/tracking/pipeline';
 import { computeLaps, computeSplits } from '@/features/tracking/splits';
+import { endLiveShare, setLiveDistance, useLiveShareStore } from '@/features/live/liveShare';
 import { subscribeToNewPoints } from '@/features/tracking/trackingEvents';
 import type { TrackPoint } from '@/features/tracking/types';
 import {
   createWorkout,
   deletePause,
-  deleteWorkout,
   endPause,
   finishWorkout,
   getActiveWorkout,
@@ -25,9 +27,11 @@ import {
   getPauses,
   getTrackPoints,
   insertLap,
+  removeWorkoutPermanently,
   startPause,
 } from '@/features/workouts/workoutRepository';
 import { defaultWorkoutTitle } from '@/features/workouts/workoutTitle';
+import { estimateCalories } from '@/lib/calories';
 import { metersPerUnit } from '@/lib/units';
 
 import { lapAnnouncement, splitAnnouncement } from './announcements';
@@ -215,7 +219,7 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
     try {
       await startLocationUpdates(activity);
     } catch (error) {
-      await deleteWorkout(workout.id);
+      await removeWorkoutPermanently(workout.id);
       set(IDLE);
       return { ok: false, reason: `GPS recording couldn’t start: ${errorMessage(error)}` };
     }
@@ -335,10 +339,20 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
       movingS: Math.round(track.movingMs / 1000),
       distanceM: track.distanceM,
       volumeKg: null,
+      elevationGainM: Math.round(track.elevationGainM),
+      caloriesEst: estimateCalories({
+        activity: workout.type,
+        movingS: track.movingMs / 1000,
+        distanceM: track.distanceM,
+        weightKg: useProfileStore.getState().profile?.weightKg ?? null,
+      }),
+      extras: JSON.stringify({ bestEfforts: bestEfforts(track) }),
       title: defaultWorkoutTitle(workout.type, workout.startedAt),
       batteryEnd: await readBatteryLevel(),
     });
     set(IDLE);
+    endLiveShare().catch(() => {});
+    trackEvent('workout_finished', { type: workout.type, source: 'gps' });
     return finished;
   },
 
@@ -346,21 +360,31 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
     const { workout } = get();
     await stopLocationUpdates();
     if (workout) {
-      await deleteWorkout(workout.id);
+      await removeWorkoutPermanently(workout.id);
     }
     set(IDLE);
+    endLiveShare().catch(() => {});
   },
 
   acknowledgeReopen: () => set({ reopenPending: false }),
 }));
 
 // New GPS points go straight into the store while a workout is live.
+let lastLiveDistanceAt = 0;
+
 subscribeToNewPoints((workoutId, newPoints) => {
-  const { phase, workout, points, checkVoiceCues } = useRecorderStore.getState();
+  const { phase, workout, points, pauses, checkVoiceCues } = useRecorderStore.getState();
   if (phase === 'live' && workout?.id === workoutId) {
-    useRecorderStore.setState({ points: [...points, ...newPoints] });
+    const allPoints = [...points, ...newPoints];
+    useRecorderStore.setState({ points: allPoints });
     // This runs with the screen off too, so the voice keeps you posted.
     checkVoiceCues();
+    // Friends following a live link see the distance so far.
+    const now = Date.now();
+    if (useLiveShareStore.getState().share && now - lastLiveDistanceAt > 15_000) {
+      lastLiveDistanceAt = now;
+      setLiveDistance(analyzeLive(workout, allPoints, pauses, now).distanceM);
+    }
   }
 });
 

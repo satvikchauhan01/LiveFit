@@ -1,11 +1,12 @@
 import * as Crypto from 'expo-crypto';
-import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import {
   ACTIVITY_TYPES,
   type ActivityType,
   GPS_ACTIVITY_TYPES,
+  strengthSets,
   trackPoints,
   type Workout,
   type WorkoutLap,
@@ -15,10 +16,22 @@ import {
   workouts,
 } from '@/db/schema';
 import { type ExerciseLog, getExerciseLogs } from '@/features/strength/strengthRepository';
+import { notifyLocalChange } from '@/features/sync/changes';
 import type { TrackPoint } from '@/features/tracking/types';
 import { deviceTimeZone } from '@/lib/dates';
 
 // --- Workouts ---------------------------------------------------------------
+
+type Visibility = Workout['visibility'];
+let defaultVisibility: () => Visibility = () => 'only_me';
+
+/**
+ * Who new workouts are shared with. The community settings plug in here; until
+ * they have loaded (or when signed out), new workouts stay private.
+ */
+export function setDefaultVisibilityProvider(provider: () => Visibility): void {
+  defaultVisibility = provider;
+}
 
 export async function createWorkout(input: {
   type: ActivityType;
@@ -41,10 +54,49 @@ export async function createWorkout(input: {
       timezone: deviceTimeZone(),
       batteryStart: input.batteryStart,
       autoPause: input.autoPause ?? false,
+      visibility: defaultVisibility(),
       createdAt: now,
       updatedAt: now,
     })
     .returning();
+  return rows[0];
+}
+
+/**
+ * Saves a workout that's already over: logged by hand, or imported from a GPX
+ * file. It's marked for upload like any finished workout.
+ */
+export async function createFinishedWorkout(input: {
+  type: ActivityType;
+  source: Workout['source'];
+  startedAt: number;
+  endedAt: number;
+  timezone?: string;
+  elapsedS: number;
+  movingS: number;
+  distanceM: number | null;
+  elevationGainM?: number | null;
+  caloriesEst?: number | null;
+  extras?: string;
+  title: string;
+  notes?: string;
+}): Promise<Workout> {
+  const now = Date.now();
+  const rows = await db
+    .insert(workouts)
+    .values({
+      id: Crypto.randomUUID(),
+      status: 'finished',
+      dirty: true,
+      batteryStart: null,
+      visibility: defaultVisibility(),
+      createdAt: now,
+      updatedAt: now,
+      ...input,
+      timezone: input.timezone ?? deviceTimeZone(),
+    })
+    .returning();
+  notifyLocalChange();
   return rows[0];
 }
 
@@ -76,8 +128,12 @@ export async function getActiveGpsWorkoutId(): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+/** A workout that hasn't been deleted. */
 export async function getWorkout(id: string): Promise<Workout | null> {
-  const rows = await db.select().from(workouts).where(eq(workouts.id, id));
+  const rows = await db
+    .select()
+    .from(workouts)
+    .where(and(eq(workouts.id, id), isNull(workouts.deletedAt)));
   return rows[0] ?? null;
 }
 
@@ -90,7 +146,7 @@ export type WorkoutFilter = {
 };
 
 function whereFinished(filter: WorkoutFilter) {
-  const conditions = [eq(workouts.status, 'finished')];
+  const conditions = [eq(workouts.status, 'finished'), isNull(workouts.deletedAt)];
   if (filter.types && filter.types.length > 0) {
     conditions.push(inArray(workouts.type, filter.types));
   }
@@ -110,6 +166,9 @@ const listColumns = {
   distanceM: workouts.distanceM,
   movingS: workouts.movingS,
   volumeKg: workouts.volumeKg,
+  elevationGainM: workouts.elevationGainM,
+  caloriesEst: workouts.caloriesEst,
+  extras: workouts.extras,
 };
 
 export type WorkoutListItem = Pick<Workout, keyof typeof listColumns>;
@@ -130,29 +189,56 @@ export async function listWorkouts(
 export type WorkoutSummaryFields = Pick<
   Workout,
   'endedAt' | 'elapsedS' | 'movingS' | 'distanceM' | 'volumeKg' | 'title' | 'batteryEnd'
->;
+> &
+  Partial<Pick<Workout, 'elevationGainM' | 'caloriesEst' | 'extras'>>;
 
 export async function finishWorkout(id: string, summary: WorkoutSummaryFields): Promise<Workout> {
   const rows = await db
     .update(workouts)
-    .set({ ...summary, status: 'finished', updatedAt: Date.now() })
+    // `dirty` marks it for upload at the next sync.
+    .set({ ...summary, status: 'finished', dirty: true, updatedAt: Date.now() })
     .where(eq(workouts.id, id))
     .returning();
+  notifyLocalChange();
   return rows[0];
 }
 
 export async function updateWorkoutDetails(
   id: string,
-  details: Pick<Workout, 'title' | 'notes'>,
+  details: Partial<Pick<Workout, 'title' | 'notes' | 'visibility'>>,
 ): Promise<void> {
   await db
     .update(workouts)
-    .set({ ...details, updatedAt: Date.now() })
+    .set({ ...details, dirty: true, updatedAt: Date.now() })
     .where(eq(workouts.id, id));
+  notifyLocalChange();
 }
 
+/**
+ * Deletes a finished workout. The route and sets go at once; a small
+ * "tombstone" row stays until the server has been told, so the delete reaches
+ * your other devices too.
+ */
 export async function deleteWorkout(id: string): Promise<void> {
-  // Track points, pauses and strength sets go too, thanks to ON DELETE CASCADE.
+  await db.transaction(async (tx) => {
+    await tx.delete(trackPoints).where(eq(trackPoints.workoutId, id));
+    await tx.delete(workoutPauses).where(eq(workoutPauses.workoutId, id));
+    await tx.delete(workoutLaps).where(eq(workoutLaps.workoutId, id));
+    await tx.delete(strengthSets).where(eq(strengthSets.workoutId, id));
+    await tx
+      .update(workouts)
+      .set({ deletedAt: Date.now(), dirty: true, updatedAt: Date.now() })
+      .where(eq(workouts.id, id));
+  });
+  notifyLocalChange();
+}
+
+/**
+ * Removes a workout and everything in it for good, e.g. discarding one that's
+ * still in progress (it was never uploaded, so there's nothing to tell the server).
+ */
+export async function removeWorkoutPermanently(id: string): Promise<void> {
+  // Track points, pauses, laps and strength sets go too, thanks to ON DELETE CASCADE.
   await db.delete(workouts).where(eq(workouts.id, id));
 }
 
@@ -223,6 +309,14 @@ export async function getPauses(workoutId: string): Promise<WorkoutPause[]> {
     .from(workoutPauses)
     .where(eq(workoutPauses.workoutId, workoutId))
     .orderBy(asc(workoutPauses.startedAt));
+}
+
+export async function insertPauses(
+  workoutId: string,
+  pauses: { startedAt: number; endedAt: number | null }[],
+): Promise<void> {
+  if (pauses.length === 0) return;
+  await db.insert(workoutPauses).values(pauses.map((pause) => ({ workoutId, ...pause })));
 }
 
 export async function startPause(workoutId: string, at: number): Promise<WorkoutPause> {

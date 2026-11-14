@@ -6,6 +6,8 @@ import m0001 from './0001_workouts.sql';
 import m0002 from './0002_weekly_goal.sql';
 import m0003 from './0003_strength.sql';
 import m0004 from './0004_runner_essentials.sql';
+import m0005 from './0005_sync.sql';
+import m0006 from './0006_progress.sql';
 
   export default {
     journal,
@@ -14,7 +16,9 @@ import m0004 from './0004_runner_essentials.sql';
 m0001,
 m0002,
 m0003,
-m0004
+m0004,
+m0005,
+m0006
     }
   }
   

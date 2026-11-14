@@ -139,6 +139,9 @@ describe('searchExercises', () => {
     ...exercise,
     isCustom: false,
     createdAt: 0,
+    updatedAt: 0,
+    deletedAt: null,
+    dirty: false,
   }));
 
   it('matches every word typed, in any order, ignoring case', () => {

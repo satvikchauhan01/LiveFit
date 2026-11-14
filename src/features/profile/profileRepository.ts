@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { type Profile, profile } from '@/db/schema';
+import { notifyLocalChange } from '@/features/sync/changes';
 
 // There is only ever one local profile row.
 const PROFILE_ID = 1;
@@ -20,6 +21,7 @@ export type ProfileChanges = Partial<
     | 'voiceCues'
     | 'reminderDays'
     | 'reminderMinutes'
+    | 'analyticsEnabled'
   >
 >;
 
@@ -38,11 +40,18 @@ export async function loadProfile(): Promise<Profile> {
   return created[0]!;
 }
 
+/** Settings that only matter on this phone, so changing them doesn't need a sync. */
+const LOCAL_ONLY: (keyof ProfileChanges)[] = ['onboardedAt'];
+
 export async function saveProfile(changes: ProfileChanges): Promise<Profile> {
+  const synced = Object.keys(changes).some(
+    (key) => !LOCAL_ONLY.includes(key as keyof ProfileChanges),
+  );
   const updated = await db
     .update(profile)
-    .set({ ...changes, updatedAt: Date.now() })
+    .set({ ...changes, ...(synced ? { dirty: true } : {}), updatedAt: Date.now() })
     .where(eq(profile.id, PROFILE_ID))
     .returning();
+  if (synced) notifyLocalChange();
   return updated[0]!;
 }

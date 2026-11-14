@@ -96,6 +96,17 @@ export function formatWorkoutDate(
   return `${WEEKDAY_SHORT[local.weekday]} ${local.day} ${MONTH_SHORT[local.month - 1]}${year} · ${pad2(local.hour)}:${pad2(local.minute)}`;
 }
 
+/** "Mon 9 Nov" (plus the year when it isn't this one), without the time of day. */
+export function formatWorkoutDay(
+  ms: number,
+  timeZone?: string | null,
+  now: number = Date.now(),
+): string {
+  const local = localDateTime(ms, timeZone);
+  const year = local.year !== localDateTime(now, timeZone).year ? ` ${local.year}` : '';
+  return `${WEEKDAY_SHORT[local.weekday]} ${local.day} ${MONTH_SHORT[local.month - 1]}${year}`;
+}
+
 /** "14:05" in local time. */
 export function formatClockTime(ms: number): string {
   const date = new Date(ms);
@@ -114,4 +125,16 @@ export function formatBatteryDrain(
   const usedPercent = (batteryStart - batteryEnd) * 100;
   const hours = durationMs / 3_600_000;
   return `${(usedPercent / hours).toFixed(1)} %/h`;
+}
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+export function formatTimeAgo(ms: number, now: number = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - ms) / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
 }

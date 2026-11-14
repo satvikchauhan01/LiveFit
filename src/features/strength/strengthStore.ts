@@ -1,14 +1,17 @@
 import { create } from 'zustand';
 
 import { type Exercise, GPS_ACTIVITY_TYPES, type StrengthSet, type Workout } from '@/db/schema';
+import { track } from '@/features/analytics/analytics';
+import type { RoutineItem } from '@/features/progress/plans';
 import { useProfileStore } from '@/features/profile/profileStore';
 import {
   createWorkout,
-  deleteWorkout,
   finishWorkout,
   getActiveWorkout,
+  removeWorkoutPermanently,
 } from '@/features/workouts/workoutRepository';
 import { defaultWorkoutTitle } from '@/features/workouts/workoutTitle';
+import { estimateCalories } from '@/lib/calories';
 
 import { cancelRestAlert, scheduleRestAlert } from './restAlerts';
 import { sessionTotals } from './strengthMath';
@@ -17,6 +20,7 @@ import {
   deleteIncompleteSets,
   deleteSet,
   type ExerciseLog,
+  getExercise,
   getExerciseLogs,
   getLastSets,
   insertSets,
@@ -47,7 +51,15 @@ type StrengthState = {
 
   restore: () => Promise<void>;
   start: () => Promise<StartResult>;
-  addExercise: (exercise: Exercise) => Promise<void>;
+  /**
+   * Adds an exercise. Without a plan, its sets start as a copy of last time;
+   * a routine or training plan can say how many sets of what.
+   */
+  addExercise: (exercise: Exercise, plan?: RoutineItem) => Promise<void>;
+  /** Fills an empty workout from a routine or plan session. */
+  addRoutine: (items: RoutineItem[]) => Promise<void>;
+  /** Adds an exercise with sets already done (e.g. read from a note by the AI coach). */
+  addDoneSets: (exercise: Exercise, values: SetValues[]) => Promise<void>;
   removeExercise: (order: number) => Promise<void>;
   addSet: (order: number) => Promise<void>;
   /** Saves edited values without ticking the set off. */
@@ -131,7 +143,7 @@ export const useStrengthStore = create<StrengthState>()((set, get) => {
       }
       const workout = await createWorkout({
         type: 'strength',
-        source: 'manual',
+        source: 'logged',
         startedAt: Date.now(),
         batteryStart: null,
       });
@@ -139,14 +151,23 @@ export const useStrengthStore = create<StrengthState>()((set, get) => {
       return { ok: true };
     },
 
-    addExercise: async (exercise) => {
+    addExercise: async (exercise, plan) => {
       const { workout, exercises } = get();
       if (!workout) return;
       const order = exercises.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;
       const lastTime = await getLastSets(exercise.id, workout.id);
 
       // Start with last session's sets and values, so repeating it is one tap per set.
-      const templates = lastTime.length > 0 ? lastTime.map(valuesOf) : [emptyValues];
+      // A routine sets the number of sets and reps; the weight comes from last time if it has none.
+      const templates: SetValues[] = plan
+        ? Array.from({ length: Math.max(1, plan.sets) }, () => ({
+            reps: plan.reps,
+            weightKg: plan.weightKg ?? lastTime[0]?.weightKg ?? null,
+            durationS: plan.durationS,
+          }))
+        : lastTime.length > 0
+          ? lastTime.map(valuesOf)
+          : [emptyValues];
       const sets = await insertSets(
         templates.map((values, setIndex) => ({
           ...values,
@@ -154,6 +175,32 @@ export const useStrengthStore = create<StrengthState>()((set, get) => {
           exerciseId: exercise.id,
           exerciseOrder: order,
           setIndex,
+        })),
+      );
+      set({ exercises: [...get().exercises, { order, exercise, sets, lastTime }] });
+    },
+
+    addRoutine: async (items) => {
+      for (const item of items) {
+        const exercise = await getExercise(item.exerciseId);
+        if (exercise) await get().addExercise(exercise, item);
+      }
+    },
+
+    addDoneSets: async (exercise, values) => {
+      const { workout, exercises } = get();
+      if (!workout || values.length === 0) return;
+      const order = exercises.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;
+      const lastTime = await getLastSets(exercise.id, workout.id);
+      const now = Date.now();
+      const sets = await insertSets(
+        values.map((value, setIndex) => ({
+          ...valuesOf(value),
+          workoutId: workout.id,
+          exerciseId: exercise.id,
+          exerciseOrder: order,
+          setIndex,
+          completedAt: now,
         })),
       );
       set({ exercises: [...get().exercises, { order, exercise, sets, lastTime }] });
@@ -245,10 +292,17 @@ export const useStrengthStore = create<StrengthState>()((set, get) => {
         movingS: elapsedS, // no pauses in a strength session
         distanceM: null,
         volumeKg: totals.volumeKg,
+        caloriesEst: estimateCalories({
+          activity: 'strength',
+          movingS: elapsedS,
+          distanceM: null,
+          weightKg: useProfileStore.getState().profile?.weightKg ?? null,
+        }),
         title: defaultWorkoutTitle('strength', workout.startedAt),
         batteryEnd: null,
       });
       set(IDLE);
+      track('workout_finished', { type: 'strength', source: 'logged' });
       return finished;
     },
 
@@ -256,7 +310,7 @@ export const useStrengthStore = create<StrengthState>()((set, get) => {
       const { workout, rest } = get();
       await cancelRestAlert(rest?.notificationId);
       if (workout) {
-        await deleteWorkout(workout.id);
+        await removeWorkoutPermanently(workout.id);
       }
       set(IDLE);
     },

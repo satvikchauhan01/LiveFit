@@ -6,6 +6,7 @@ module.exports = defineConfig([
   expoConfig,
   prettierRecommended,
   {
-    ignores: ['dist/*', '.expo/*', 'android/*', 'ios/*'],
+    // The server has its own tooling (see server/package.json).
+    ignores: ['dist/*', '.expo/*', 'android/*', 'ios/*', 'server/*'],
   },
 ]);

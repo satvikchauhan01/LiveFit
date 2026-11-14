@@ -39,6 +39,8 @@ export default function RecordLayout() {
         }}
       />
       <Stack.Screen name="ready" options={{ title: '' }} />
+      <Stack.Screen name="manual" options={{ title: 'Log a workout' }} />
+      <Stack.Screen name="import" options={{ title: 'Import GPX' }} />
     </Stack>
   );
 }

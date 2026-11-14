@@ -1,0 +1,40 @@
+# Render Blueprint: the LiveFit server (server/) and its Postgres database.
+# In Render: New → Blueprint → pick this repository.
+#
+# Regions can't be changed after creation. Before the first deploy, set both
+# `region` values to the one nearest your users:
+# oregon, ohio, virginia, frankfurt or singapore.
+
+services:
+  - type: web
+    name: livefit-server
+    runtime: docker
+    plan: free
+    region: oregon
+    # Only changes inside server/ start a new deploy.
+    rootDir: server
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '10000'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: livefit-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      # Asked for when the Blueprint is created: your own email, for moderator access.
+      - key: ADMIN_EMAILS
+        sync: false
+
+databases:
+  - name: livefit-db
+    plan: free
+    region: oregon
+    databaseName: livefit
+    user: livefit
+    postgresMajorVersion: '17'

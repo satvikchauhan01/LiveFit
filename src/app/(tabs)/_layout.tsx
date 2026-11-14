@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Icon } from '@/components/Icon';
+import { CommunityHeaderButtons } from '@/features/community/CommunityHeaderButtons';
 import { useRecorderStore } from '@/features/recorder/recorderStore';
 import { useStrengthStore } from '@/features/strength/strengthStore';
 import { useActiveSession } from '@/features/workouts/activeSession';
@@ -50,10 +51,10 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="progress"
         options={{
-          title: 'History',
-          tabBarIcon: ({ color, size }) => <Icon name="time" color={color} size={size} />,
+          title: 'Progress',
+          tabBarIcon: ({ color, size }) => <Icon name="stats-chart" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -77,6 +78,14 @@ export default function TabsLayout() {
             event.preventDefault();
             router.push(active ? active.route : '/record');
           },
+        }}
+      />
+      <Tabs.Screen
+        name="community"
+        options={{
+          title: 'Community',
+          headerRight: () => <CommunityHeaderButtons />,
+          tabBarIcon: ({ color, size }) => <Icon name="people" color={color} size={size} />,
         }}
       />
       <Tabs.Screen

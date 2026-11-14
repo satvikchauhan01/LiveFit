@@ -17,6 +17,9 @@ function workout(isoUtc: string, timezone = 'UTC'): WorkoutListItem {
     distanceM: 5000,
     movingS: 1500,
     volumeKg: null,
+    elevationGainM: null,
+    caloriesEst: null,
+    extras: '{}',
   };
 }
 

@@ -10,7 +10,9 @@ import { minTouchTarget, spacing } from '@/theme/tokens';
 import { EQUIPMENT_LABEL, MUSCLE_GROUP_LABEL } from './builtInExercises';
 import type { SetField } from './setInput';
 import { fieldsFor, SetRow } from './SetRow';
-import { formatSetsSummary } from './strengthFormat';
+import { estimatedOneRepMax, overloadHint } from '@/features/progress/strengthMath';
+
+import { formatLoad, formatSetsSummary } from './strengthFormat';
 import { type SessionExercise, useStrengthStore } from './strengthStore';
 
 type Props = {
@@ -33,6 +35,14 @@ export function ExerciseCard({ entry, unit }: Props) {
   const removeExercise = useStrengthStore((state) => state.removeExercise);
 
   const { exercise } = entry;
+  const hint = exercise.logType === 'weight_reps' ? overloadHint(entry.lastTime, unit) : null;
+  const oneRepMax = entry.lastTime.reduce<number | null>((best, set) => {
+    const estimate =
+      set.weightKg !== null && set.reps !== null
+        ? estimatedOneRepMax(set.weightKg, set.reps)
+        : null;
+    return estimate !== null && (best === null || estimate > best) ? estimate : best;
+  }, null);
 
   const confirmRemove = () =>
     Alert.alert(`Remove ${exercise.name}?`, 'Its sets in this workout will be deleted.', [
@@ -62,6 +72,13 @@ export function ExerciseCard({ entry, unit }: Props) {
       {entry.lastTime.length > 0 && (
         <AppText variant="caption" tone="accent">
           Last time: {formatSetsSummary(entry.lastTime, exercise.logType, unit)}
+          {oneRepMax !== null ? ` · est. 1RM ${formatLoad(oneRepMax, unit)} ${unit}` : ''}
+        </AppText>
+      )}
+      {hint && (
+        <AppText variant="caption" tone="muted">
+          Ready for more? Try {formatLoad(hint.weightKg, unit)} {unit} × {hint.reps}, or{' '}
+          {hint.moreReps} reps at the same weight.
         </AppText>
       )}
 

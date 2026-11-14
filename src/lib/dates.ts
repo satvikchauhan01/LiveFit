@@ -128,6 +128,11 @@ export function weekKeyOf(ms: number, timeZone?: string | null): DateKey {
   return addDays(toDateKey(local.year, local.month, local.day), -local.weekday);
 }
 
+/** The date and time right now, on the phone's clock. */
+export function localNow(): LocalDateTime {
+  return localDateTime(Date.now());
+}
+
 /** The Monday of this week, on the phone's clock. */
 export function currentWeekKey(): DateKey {
   return weekKeyOf(Date.now());

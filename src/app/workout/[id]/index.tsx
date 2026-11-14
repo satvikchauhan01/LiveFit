@@ -10,9 +10,13 @@ import { Icon, type IconName } from '@/components/Icon';
 import { ListRow } from '@/components/ListRow';
 import { Screen } from '@/components/Screen';
 import { TextField } from '@/components/TextField';
-import { isGpsActivityType } from '@/db/schema';
+import { isGpsActivityType, type Workout } from '@/db/schema';
+import { VisibilityPicker } from '@/features/community/VisibilityPicker';
 import { useProfile } from '@/features/profile/profileStore';
+import { RecordCelebration } from '@/features/progress/RecordCelebration';
+import { saveAsRoutine } from '@/features/progress/saveAsRoutine';
 import { StrengthSummary } from '@/features/strength/StrengthSummary';
+import { shareWorkoutAsGpx } from '@/features/tracking/gpxExport';
 import { ACTIVITY_DISPLAY } from '@/features/workouts/activities';
 import {
   deleteWorkout,
@@ -156,6 +160,16 @@ export default function WorkoutScreen() {
 
   const fallbackTitle = defaultWorkoutTitle(workout.type, workout.startedAt);
 
+  const changeVisibility = async (visibility: Workout['visibility']) => {
+    setDetail({ ...detail, workout: { ...workout, visibility } });
+    try {
+      await updateWorkoutDetails(workout.id, { visibility });
+    } catch (error) {
+      setDetail(detail);
+      Alert.alert('Couldn’t change who can see it', String(error));
+    }
+  };
+
   const handleSave = async () => {
     if (!draft) return;
     setBusy(true);
@@ -209,10 +223,43 @@ export default function WorkoutScreen() {
         </Card>
       )}
 
+      <RecordCelebration workoutId={workout.id} />
+
+      <VisibilityPicker
+        workoutId={workout.id}
+        value={workout.visibility}
+        onChange={(visibility) => changeVisibility(visibility)}
+        showCommunityLink={!isSummary}
+      />
+
       {isGpsActivityType(workout.type) ? (
         <WorkoutSummary detail={detail} activity={workout.type} unit={distanceUnit} />
       ) : (
         <StrengthSummary workout={workout} exercises={detail.exercises} unit={weightUnit} />
+      )}
+
+      {!isSummary && (
+        <Card>
+          <ListRow
+            icon="image-outline"
+            title="Share as image"
+            subtitle="A card with your route and stats"
+            onPress={() =>
+              router.push({ pathname: '/workout/[id]/share', params: { id: workout.id } })
+            }
+          />
+        </Card>
+      )}
+
+      {workout.type === 'strength' && detail.exercises.length > 0 && (
+        <Card>
+          <ListRow
+            icon="bookmark-outline"
+            title="Save as routine"
+            subtitle="Repeat these exercises and sets another day"
+            onPress={() => saveAsRoutine(detail.exercises, workout.title || fallbackTitle)}
+          />
+        </Card>
       )}
 
       {isSummary && (
@@ -227,6 +274,21 @@ export default function WorkoutScreen() {
             disabled={busy}
           />
         </View>
+      )}
+
+      {isGpsActivityType(workout.type) && detail.points.length > 0 && !isSummary && (
+        <Card>
+          <ListRow
+            icon="share-outline"
+            title="Export GPX"
+            subtitle="Open the route in another app or on a computer"
+            onPress={() =>
+              shareWorkoutAsGpx(workout, detail.points, detail.pauses).catch((error: unknown) =>
+                Alert.alert('Export failed', String(error)),
+              )
+            }
+          />
+        </Card>
       )}
 
       {__DEV__ && isGpsActivityType(workout.type) && (

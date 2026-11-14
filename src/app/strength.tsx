@@ -18,6 +18,9 @@ import { Icon } from '@/components/Icon';
 import { useProfile } from '@/features/profile/profileStore';
 import { ExerciseCard } from '@/features/strength/ExerciseCard';
 import { RestTimerBar } from '@/features/strength/RestTimerBar';
+import { useAccountStore } from '@/features/account/accountStore';
+import { serverConfigured } from '@/features/account/apiClient';
+import { RoutinePicker } from '@/features/strength/RoutinePicker';
 import { useStrengthStore } from '@/features/strength/strengthStore';
 import { formatDuration } from '@/lib/format';
 import { useNow } from '@/lib/useNow';
@@ -33,6 +36,7 @@ function leaveScreen() {
 
 /** The strength workout in progress. */
 export default function StrengthScreen() {
+  const signedIn = useAccountStore((state) => state.status === 'signedIn');
   const workout = useStrengthStore((state) => state.workout);
   const exercises = useStrengthStore((state) => state.exercises);
   const finish = useStrengthStore((state) => state.finish);
@@ -127,6 +131,15 @@ export default function StrengthScreen() {
         </View>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Plate calculator"
+          hitSlop={8}
+          onPress={() => router.push('/plate-calculator')}
+          style={styles.headerButton}
+        >
+          <Icon name="calculator-outline" size={24} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
           onPress={handleFinish}
           disabled={busy}
           style={({ pressed }) => [styles.finish, pressed && styles.pressed]}
@@ -144,11 +157,14 @@ export default function StrengthScreen() {
           keyboardDismissMode="on-drag"
         >
           {exercises.length === 0 && (
-            <EmptyState
-              icon="barbell-outline"
-              title="Add your first exercise"
-              message="Pick from the list or create your own. Sets you did last time are filled in for you."
-            />
+            <>
+              <EmptyState
+                icon="barbell-outline"
+                title="Add your first exercise"
+                message="Pick from the list or create your own. Sets you did last time are filled in for you."
+              />
+              <RoutinePicker />
+            </>
           )}
 
           {exercises.map((entry) => (
@@ -161,6 +177,14 @@ export default function StrengthScreen() {
             onPress={() => router.push('/exercises/pick')}
             disabled={busy}
           />
+          {serverConfigured && signedIn && (
+            <Button
+              label="Log from a note (AI coach)"
+              variant="ghost"
+              onPress={() => router.push('/coach/log')}
+              disabled={busy}
+            />
+          )}
           <Button label="Discard workout" variant="ghost" onPress={handleDiscard} disabled={busy} />
         </ScrollView>
 

@@ -8,11 +8,13 @@ import type { GpsActivityType } from '@/db/schema';
 import { analyzeTrack } from '@/features/tracking/pipeline';
 import { computeLaps, computeSplits, splitsForSummary } from '@/features/tracking/splits';
 import { TrackMap } from '@/features/tracking/TrackMap';
-import { formatDistance, formatDuration, formatPace } from '@/lib/format';
+import { formatDistance, formatDuration } from '@/lib/format';
 import { type DistanceUnit, metersPerUnit } from '@/lib/units';
 import { spacing } from '@/theme/tokens';
 
+import { ACTIVITY_DISPLAY } from './activities';
 import { LapsTable } from './LapsTable';
+import { formatRate } from './rateDisplay';
 import { SplitsTable } from './SplitsTable';
 import type { WorkoutDetail } from './workoutRepository';
 
@@ -26,6 +28,7 @@ type Props = {
 /** Route, headline numbers and splits of a finished workout. */
 export function WorkoutSummary({ detail, activity, unit }: Props) {
   const { workout, points, pauses, laps } = detail;
+  const measure = ACTIVITY_DISPLAY[activity].measure;
 
   const track = useMemo(
     () =>
@@ -62,8 +65,25 @@ export function WorkoutSummary({ detail, activity, unit }: Props) {
           <StatTile label="Moving time" value={formatDuration(track.movingMs)} />
         </View>
         <View style={styles.row}>
-          <StatTile label="Avg pace" value={formatPace(track.averagePaceSecPerKm, unit)} />
+          <StatTile
+            label={measure === 'pace' ? 'Avg pace' : 'Avg speed'}
+            value={formatRate(track.averagePaceSecPerKm, unit, measure)}
+          />
           <StatTile label="Elapsed time" value={formatDuration(track.elapsedMs)} />
+        </View>
+        <View style={styles.row}>
+          <StatTile
+            label="Climb"
+            value={
+              unit === 'km'
+                ? `${Math.round(track.elevationGainM)} m`
+                : `${Math.round(track.elevationGainM * 3.28084)} ft`
+            }
+          />
+          <StatTile
+            label="Calories (est.)"
+            value={workout.caloriesEst !== null ? `${Math.round(workout.caloriesEst)} kcal` : '–'}
+          />
         </View>
       </View>
 
@@ -71,7 +91,7 @@ export function WorkoutSummary({ detail, activity, unit }: Props) {
         <AppText variant="label" tone="muted">
           Splits
         </AppText>
-        <SplitsTable splits={splits} unit={unit} />
+        <SplitsTable splits={splits} unit={unit} measure={measure} />
       </Card>
 
       {lapSplits.length > 0 && (
@@ -79,7 +99,7 @@ export function WorkoutSummary({ detail, activity, unit }: Props) {
           <AppText variant="label" tone="muted">
             Laps
           </AppText>
-          <LapsTable laps={lapSplits} unit={unit} />
+          <LapsTable laps={lapSplits} unit={unit} measure={measure} />
         </Card>
       )}
     </>

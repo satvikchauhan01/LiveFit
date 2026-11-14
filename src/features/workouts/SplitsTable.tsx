@@ -2,17 +2,20 @@ import { StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import type { Split } from '@/features/tracking/splits';
-import { DISTANCE_UNIT_NAME, formatDistanceValue, formatPaceValue } from '@/lib/format';
+import type { Measure } from '@/features/workouts/activities';
+import { rateUnit, rateValue } from '@/features/workouts/rateDisplay';
+import { DISTANCE_UNIT_NAME, formatDistanceValue } from '@/lib/format';
 import type { DistanceUnit } from '@/lib/units';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 type Props = {
   splits: Split[];
   unit: DistanceUnit;
+  measure?: Measure;
 };
 
 /** One row per km (or mile), with a bar that's longer for faster splits. */
-export function SplitsTable({ splits, unit }: Props) {
+export function SplitsTable({ splits, unit, measure = 'pace' }: Props) {
   if (splits.length === 0) {
     return (
       <AppText tone="muted">
@@ -31,7 +34,7 @@ export function SplitsTable({ splits, unit }: Props) {
           {DISTANCE_UNIT_NAME[unit].singular}
         </AppText>
         <AppText variant="label" tone="muted" style={styles.paceColumn}>
-          Pace
+          {measure === 'pace' ? 'Pace' : rateUnit(unit, measure)}
         </AppText>
       </View>
       {splits.map((split) => {
@@ -46,13 +49,13 @@ export function SplitsTable({ splits, unit }: Props) {
             key={split.index}
             style={styles.row}
             accessible
-            accessibilityLabel={`${DISTANCE_UNIT_NAME[unit].singular} ${label}: ${formatPaceValue(pace, unit)} per ${unit}`}
+            accessibilityLabel={`${DISTANCE_UNIT_NAME[unit].singular} ${label}: ${rateValue(pace, unit, measure)} ${rateUnit(unit, measure)}`}
           >
             <AppText numeric style={styles.indexColumn}>
               {label}
             </AppText>
             <AppText numeric style={styles.paceColumn}>
-              {formatPaceValue(pace, unit)}
+              {rateValue(pace, unit, measure)}
             </AppText>
             <View style={styles.barTrack}>
               <View style={[styles.bar, { width: `${Math.max(8, share * 100)}%` }]} />

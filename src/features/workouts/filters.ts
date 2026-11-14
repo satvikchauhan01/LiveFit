@@ -10,6 +10,9 @@ export const ACTIVITY_FILTERS: { value: ActivityFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'run', label: 'Runs' },
   { value: 'walk', label: 'Walks' },
+  { value: 'cycle', label: 'Rides' },
+  { value: 'hike', label: 'Hikes' },
+  { value: 'wheelchair', label: 'Wheelchair' },
   { value: 'strength', label: 'Strength' },
 ];
 

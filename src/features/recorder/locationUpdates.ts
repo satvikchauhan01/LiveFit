@@ -3,6 +3,7 @@ import * as Location from 'expo-location';
 
 import type { GpsActivityType } from '@/db/schema';
 import { LOCATION_TASK } from '@/features/tracking/locationTask';
+import { ACTIVITY_DISPLAY } from '@/features/workouts/activities';
 import { colors } from '@/theme/tokens';
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
@@ -23,8 +24,6 @@ export function isLocationTaskRunning(): Promise<boolean> {
   return Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
 }
 
-const ACTIVITY_NAMES: Record<GpsActivityType, string> = { run: 'run', walk: 'walk' };
-
 /**
  * Starts GPS recording as an Android foreground service. Must be called while
  * the app is on screen: Android doesn't let apps start one from the background.
@@ -44,7 +43,7 @@ export async function startLocationUpdates(activity: GpsActivityType): Promise<v
     // Android: the persistent notification is what keeps GPS alive with the
     // screen off, using only "While using the app" permission.
     foregroundService: {
-      notificationTitle: `LiveFit is recording your ${ACTIVITY_NAMES[activity]}`,
+      notificationTitle: `LiveFit is recording your ${ACTIVITY_DISPLAY[activity].word}`,
       notificationBody: 'Open LiveFit to pause or finish.',
       notificationColor: colors.accent,
       // Keep recording if the app is swiped away from recent apps.

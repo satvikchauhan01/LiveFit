@@ -1,6 +1,7 @@
 import type { LocationObject } from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
+import { postLivePosition } from '@/features/live/liveShare';
 import { getActiveGpsWorkoutId, insertTrackPoints } from '@/features/workouts/workoutRepository';
 
 import { publishNewPoints } from './trackingEvents';
@@ -50,4 +51,6 @@ TaskManager.defineTask<LocationTaskData>(LOCATION_TASK, async ({ data, error }) 
   // Save first, then tell the UI: if the app dies right after this line, the points are safe.
   await insertTrackPoints(workoutId, points);
   publishNewPoints(workoutId, points);
+  // If a live link is on, friends following it get the new position.
+  await postLivePosition(workoutId, points);
 });
