@@ -1,7 +1,7 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
-import type { Workout } from '@/db/schema';
+import { isGpsActivityType, type Workout } from '@/db/schema';
 
 import { buildGpx } from './gpx';
 import type { PauseInterval, TrackPoint } from './types';
@@ -29,7 +29,7 @@ export async function shareWorkoutAsGpx(
   await file.write(
     buildGpx({
       name: workout.title || `LiveFit ${workout.type}`,
-      activity: workout.type,
+      activity: isGpsActivityType(workout.type) ? workout.type : null,
       startedAt: workout.startedAt,
       endedAt: workout.endedAt,
       pauses,

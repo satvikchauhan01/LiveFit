@@ -1,24 +1,26 @@
-import type { ActivityType } from '@/db/schema';
+import type { GpsActivityType } from '@/db/schema';
 
-import { GPS_SETTINGS, MAX_SPEED_MPS } from './config';
+import { GPS_SETTINGS, MAX_SPEED_MPS, STOP_SPEED_MPS } from './config';
 import { haversineMeters, paceSecondsPerKm } from './geo';
 import { activeMsAt, isPausedAt, pausedMsBetween } from './pauses';
 import type { PauseInterval, TrackPoint } from './types';
 
 export type TrackInput = {
-  activity: ActivityType;
+  activity: GpsActivityType;
   startedAt: number;
   /** When the workout ended, or "now" while it is still being recorded. */
   endAt: number;
   points: TrackPoint[];
   pauses: PauseInterval[];
+  /** Leave out the time and distance while you're standing still. Off when left out. */
+  autoPause?: boolean;
 };
 
 export type PathPoint = TrackPoint & {
   /** Distance covered from the start up to this point, in metres. */
   distanceM: number;
-  /** Recording time (pauses excluded) from the start up to this point, in ms. */
-  activeMs: number;
+  /** Moving time (pauses and auto-paused stops excluded) from the start up to this point, in ms. */
+  movingMs: number;
 };
 
 export type DropCounts = {
@@ -41,6 +43,8 @@ export type TrackDiagnostics = {
   unsmoothedDistanceM: number;
   /** Longest time between two fixes: big gaps mean the phone suspended the app. */
   longestGapMs: number;
+  /** Time left out by auto-pause. */
+  autoPausedMs: number;
   averageAccuracyM: number | null;
   mockedCount: number;
 };
@@ -52,6 +56,8 @@ export type WorkoutTrack = {
   averagePaceSecPerKm: number | null;
   /** The cleaned-up route, cut into pieces wherever the workout was paused. */
   segments: PathPoint[][];
+  /** Auto-pause has stopped the clock right now (the latest fixes are a stop). */
+  endsStopped: boolean;
   diagnostics: TrackDiagnostics;
 };
 
@@ -66,6 +72,7 @@ export function analyzeTrack({
   endAt,
   points,
   pauses,
+  autoPause = false,
 }: TrackInput): WorkoutTrack {
   const maxSpeedMps = MAX_SPEED_MPS[activity];
   const dropped: DropCounts = {
@@ -134,23 +141,48 @@ export function analyzeTrack({
     lastKept = point;
   }
 
-  // 3. Smooth each segment, then 4. measure distance and time along it.
+  // 3. Smooth each segment, then 4. measure distance and time along it,
+  //    leaving out stops when auto-pause is on.
   let distanceM = 0;
   let unsmoothedDistanceM = 0;
-  const segments = filtered.map((segment) => {
+  let autoPausedMs = 0;
+  let endsStopped = false;
+  const segments = filtered.map((segment, segmentIndex) => {
     for (let i = 1; i < segment.length; i += 1) {
       unsmoothedDistanceM += haversineMeters(segment[i - 1], segment[i]);
     }
     const smoothed = smooth(segment, GPS_SETTINGS.smoothingWindow);
+    const stopped = autoPause
+      ? findStops(smoothed, STOP_SPEED_MPS[activity])
+      : smoothed.map(() => false);
+    if (segmentIndex === filtered.length - 1) {
+      endsStopped = stopped[stopped.length - 1] ?? false;
+    }
     return smoothed.map((point, i): PathPoint => {
       if (i > 0) {
-        distanceM += haversineMeters(smoothed[i - 1], point);
+        if (stopped[i]) {
+          autoPausedMs += point.t - smoothed[i - 1].t;
+        } else {
+          distanceM += haversineMeters(smoothed[i - 1], point);
+        }
       }
-      return { ...point, distanceM, activeMs: activeMsAt(point.t, startedAt, pauses) };
+      return {
+        ...point,
+        distanceM,
+        movingMs: activeMsAt(point.t, startedAt, pauses) - autoPausedMs,
+      };
     });
   });
 
-  const movingMs = activeMsAt(endAt, startedAt, pauses);
+  // Still stopped at the end: the time since the last fix is part of the stop too.
+  const lastSegment = filtered[filtered.length - 1];
+  const lastPoint = lastSegment?.[lastSegment.length - 1];
+  if (endsStopped && lastPoint) {
+    autoPausedMs +=
+      activeMsAt(endAt, startedAt, pauses) - activeMsAt(lastPoint.t, startedAt, pauses);
+  }
+
+  const movingMs = Math.max(0, activeMsAt(endAt, startedAt, pauses) - autoPausedMs);
 
   return {
     distanceM,
@@ -158,6 +190,7 @@ export function analyzeTrack({
     elapsedMs: Math.max(0, endAt - startedAt),
     averagePaceSecPerKm: paceSecondsPerKm(distanceM, movingMs),
     segments,
+    endsStopped,
     diagnostics: {
       pointCount: points.length,
       keptCount: filtered.reduce((sum, segment) => sum + segment.length, 0),
@@ -165,10 +198,58 @@ export function analyzeTrack({
       rawDistanceM,
       unsmoothedDistanceM,
       longestGapMs,
+      autoPausedMs,
       averageAccuracyM: accuracyCount > 0 ? accuracySum / accuracyCount : null,
       mockedCount,
     },
   };
+}
+
+/**
+ * Auto-pause: marks each step (from point i - 1 to point i) that belongs to a stop.
+ *
+ * Speed is measured as the straight-line distance between the points about two
+ * seconds either side, divided by the time between them. Standing still, GPS
+ * wobbles back and forth, and those wobbles cancel out over the window; walking
+ * or running, the distance adds up. Steps slower than `stopSpeedMps` for at
+ * least `minStopMs` in a row count as a stop.
+ */
+export function findStops(
+  points: TrackPoint[],
+  stopSpeedMps: number,
+  minStopMs: number = GPS_SETTINGS.autoPauseAfterMs,
+  windowMs: number = GPS_SETTINGS.stopWindowMs,
+): boolean[] {
+  const slow = points.map(() => false);
+  let from = 0;
+  let to = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    while (points[i].t - points[from].t > windowMs && from < i - 1) from += 1;
+    to = Math.max(to, i);
+    while (to + 1 < points.length && points[to + 1].t - points[i].t <= windowMs) to += 1;
+    const seconds = (points[to].t - points[from].t) / 1000;
+    const speed = seconds > 0 ? haversineMeters(points[from], points[to]) / seconds : 0;
+    slow[i] = speed < stopSpeedMps;
+  }
+
+  // Keep only runs of slow steps that last long enough to be a real stop.
+  const stopped = points.map(() => false);
+  let runStart = -1;
+  const closeRun = (end: number) => {
+    if (runStart > 0 && points[end - 1].t - points[runStart - 1].t >= minStopMs) {
+      for (let k = runStart; k < end; k += 1) stopped[k] = true;
+    }
+    runStart = -1;
+  };
+  for (let i = 1; i < points.length; i += 1) {
+    if (slow[i]) {
+      if (runStart < 0) runStart = i;
+    } else {
+      closeRun(i);
+    }
+  }
+  closeRun(points.length);
+  return stopped;
 }
 
 /**
@@ -200,13 +281,13 @@ export function smooth(segment: TrackPoint[], window: number): TrackPoint[] {
 /** Pace over the last few seconds since the latest pause, or null if there's too little data. */
 export function currentPaceSecPerKm(track: WorkoutTrack): number | null {
   const segment = track.segments[track.segments.length - 1];
-  if (!segment || segment.length < 2) {
+  if (!segment || segment.length < 2 || track.endsStopped) {
     return null;
   }
   const last = segment[segment.length - 1];
-  const windowStartMs = last.activeMs - GPS_SETTINGS.currentPaceWindowMs;
-  const first = segment.find((point) => point.activeMs >= windowStartMs) ?? segment[0];
-  return paceSecondsPerKm(last.distanceM - first.distanceM, last.activeMs - first.activeMs);
+  const windowStartMs = last.movingMs - GPS_SETTINGS.currentPaceWindowMs;
+  const first = segment.find((point) => point.movingMs >= windowStartMs) ?? segment[0];
+  return paceSecondsPerKm(last.distanceM - first.distanceM, last.movingMs - first.movingMs);
 }
 
 /** The newest kept point, e.g. for the "you are here" dot. */

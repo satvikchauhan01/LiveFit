@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { formatDistance, formatDuration, formatPace, formatPaceValue } from './format';
+import {
+  formatDistance,
+  formatDuration,
+  formatPace,
+  formatPaceValue,
+  formatTotals,
+} from './format';
 import { METERS_PER_MILE } from './units';
 
 describe('formatDuration', () => {
@@ -16,6 +22,21 @@ describe('formatDistance', () => {
   it('converts metres to the chosen unit', () => {
     expect(formatDistance(1234, 'km')).toBe('1.23 km');
     expect(formatDistance(METERS_PER_MILE, 'mi')).toBe('1.00 mi');
+  });
+});
+
+describe('formatTotals', () => {
+  it('summarises a group of workouts', () => {
+    expect(formatTotals({ count: 1, distanceM: 5000, movingS: 1500 }, 'km')).toBe(
+      '1 workout · 5.00 km · 25:00',
+    );
+    expect(formatTotals({ count: 3, distanceM: 12_400, movingS: 3912 }, 'km')).toBe(
+      '3 workouts · 12.40 km · 1:05:12',
+    );
+    // Strength-only weeks have no distance to show.
+    expect(formatTotals({ count: 2, distanceM: 0, movingS: 4500 }, 'km')).toBe(
+      '2 workouts · 1:15:00',
+    );
   });
 });
 

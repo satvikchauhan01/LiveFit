@@ -4,12 +4,14 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { AppText } from '@/components/AppText';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { Chip } from '@/components/Chip';
 import { EmptyState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { ListRow } from '@/components/ListRow';
 import { Screen } from '@/components/Screen';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { StatTile } from '@/components/StatTile';
+import { Stepper } from '@/components/Stepper';
 import { TextField } from '@/components/TextField';
 import { colors, spacing } from '@/theme/tokens';
 
@@ -30,6 +32,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function ComponentsScreen() {
   const [unit, setUnit] = useState<'km' | 'mi'>('km');
   const [text, setText] = useState('');
+  const [chip, setChip] = useState<'All' | 'Runs' | 'Walks'>('All');
+  const [count, setCount] = useState(3);
   const ping = () => Alert.alert('Pressed');
 
   return (
@@ -96,6 +100,25 @@ export default function ComponentsScreen() {
         <TextField label="Text field" value={text} onChangeText={setText} placeholder="Type…" />
         <TextField label="With suffix and hint" suffix="kg" hint="A helpful hint" />
         <TextField label="With error" error="Something is wrong with this value" />
+        <TextField label="Multi-line" multiline placeholder="Notes…" />
+        <View style={styles.row}>
+          {(['All', 'Runs', 'Walks'] as const).map((label) => (
+            <Chip
+              key={label}
+              label={label}
+              selected={chip === label}
+              onPress={() => setChip(label)}
+            />
+          ))}
+        </View>
+        <Stepper
+          accessibilityLabel="Example stepper"
+          value={count}
+          min={1}
+          max={7}
+          onChange={setCount}
+          format={(value) => `${value} per week`}
+        />
       </Section>
 
       <Section title="Icons">

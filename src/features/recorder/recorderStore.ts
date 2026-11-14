@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 
-import type { ActivityType, Workout, WorkoutPause } from '@/db/schema';
+import {
+  GPS_ACTIVITY_TYPES,
+  type GpsActivityType,
+  isGpsActivityType,
+  type Workout,
+  type WorkoutLap,
+  type WorkoutPause,
+} from '@/db/schema';
+import { useProfileStore } from '@/features/profile/profileStore';
 import { openPause } from '@/features/tracking/pauses';
-import { analyzeTrack } from '@/features/tracking/pipeline';
+import { analyzeTrack, type WorkoutTrack } from '@/features/tracking/pipeline';
+import { computeLaps, computeSplits } from '@/features/tracking/splits';
 import { subscribeToNewPoints } from '@/features/tracking/trackingEvents';
 import type { TrackPoint } from '@/features/tracking/types';
 import {
@@ -12,12 +21,16 @@ import {
   endPause,
   finishWorkout,
   getActiveWorkout,
+  getLaps,
   getPauses,
   getTrackPoints,
+  insertLap,
   startPause,
 } from '@/features/workouts/workoutRepository';
 import { defaultWorkoutTitle } from '@/features/workouts/workoutTitle';
+import { metersPerUnit } from '@/lib/units';
 
+import { lapAnnouncement, splitAnnouncement } from './announcements';
 import {
   type ActionResult,
   ensureLocationReady,
@@ -26,6 +39,7 @@ import {
   startLocationUpdates,
   stopLocationUpdates,
 } from './locationUpdates';
+import { speak } from './voice';
 
 export type { ActionResult };
 
@@ -40,25 +54,69 @@ export type { ActionResult };
  */
 export type RecorderPhase = 'idle' | 'live';
 
+/** A workout row known to be a run or walk. */
+export type GpsWorkout = Workout & { type: GpsActivityType };
+
+function isGpsWorkout(workout: Workout): workout is GpsWorkout {
+  return isGpsActivityType(workout.type);
+}
+
 /** No new GPS fix for this long at launch means the app was closed mid-workout. */
 const RECOVERY_GAP_MS = 60_000;
+
+/** How often new points are checked for a finished km/mile to announce. */
+const VOICE_CHECK_INTERVAL_MS = 5_000;
+
+/** The pipeline run over the live workout's points so far. */
+export function analyzeLive(
+  workout: GpsWorkout,
+  points: TrackPoint[],
+  pauses: WorkoutPause[],
+  now: number,
+): WorkoutTrack {
+  const lastFix = points[points.length - 1]?.t ?? 0;
+  return analyzeTrack({
+    activity: workout.type,
+    startedAt: workout.startedAt,
+    // The GPS clock can run slightly ahead of the phone's clock; never drop the newest fix.
+    endAt: Math.max(now, lastFix),
+    points,
+    pauses,
+    autoPause: workout.autoPause,
+  });
+}
+
+function distanceUnit() {
+  return useProfileStore.getState().profile?.distanceUnit ?? 'km';
+}
+
+function voiceCuesOn() {
+  return useProfileStore.getState().profile?.voiceCues ?? false;
+}
 
 type RecorderState = {
   /** False until the launch-time check for an unfinished workout has run. */
   restored: boolean;
   phase: RecorderPhase;
-  workout: Workout | null;
+  workout: GpsWorkout | null;
   points: TrackPoint[];
   pauses: WorkoutPause[];
+  laps: WorkoutLap[];
+  /** Completed km/mile splits already announced by voice. */
+  announcedSplits: number;
   /** The app was closed while recording; the gap is treated as a pause. */
   interrupted: boolean;
   /** An unfinished workout was found at launch, so the live screen should open. */
   reopenPending: boolean;
 
   restore: () => Promise<void>;
-  start: (activity: ActivityType) => Promise<ActionResult>;
+  start: (activity: GpsActivityType) => Promise<ActionResult>;
   pause: () => Promise<void>;
   resume: () => Promise<ActionResult>;
+  /** Ends the current lap and starts the next one. */
+  lap: () => Promise<void>;
+  /** Announces a newly completed km/mile, if voice cues are on. */
+  checkVoiceCues: () => void;
   /** Stops recording and saves the summary. Returns the saved workout. */
   finish: () => Promise<Workout | null>;
   discard: () => Promise<void>;
@@ -70,9 +128,13 @@ const IDLE = {
   workout: null,
   points: [],
   pauses: [],
+  laps: [],
+  announcedSplits: 0,
   interrupted: false,
   reopenPending: false,
 } satisfies Partial<RecorderState>;
+
+let lastVoiceCheck = 0;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -83,7 +145,8 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
   ...IDLE,
 
   restore: async () => {
-    const workout = await getActiveWorkout();
+    const found = await getActiveWorkout(GPS_ACTIVITY_TYPES);
+    const workout = found && isGpsWorkout(found) ? found : null;
     const running = await isLocationTaskRunning();
 
     if (!workout) {
@@ -94,7 +157,11 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
       return;
     }
 
-    const [points, pauses] = await Promise.all([getTrackPoints(workout.id), getPauses(workout.id)]);
+    const [points, pauses, laps] = await Promise.all([
+      getTrackPoints(workout.id),
+      getPauses(workout.id),
+      getLaps(workout.id),
+    ]);
     const lastFixAt = points.length > 0 ? points[points.length - 1].t : workout.startedAt;
     const stale = Date.now() - lastFixAt > RECOVERY_GAP_MS;
     const interrupted = !running || (stale && !openPause(pauses));
@@ -105,12 +172,18 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
       pauses.push(await startPause(workout.id, lastFixAt));
     }
 
+    // Don't re-announce kilometres that were already called out before the restart.
+    const track = analyzeLive(workout, points, pauses, Date.now());
+    const announcedSplits = computeSplits(track, metersPerUnit(distanceUnit())).completed.length;
+
     set({
       restored: true,
       phase: 'live',
       workout,
       points,
       pauses,
+      laps,
+      announcedSplits,
       interrupted,
       reopenPending: true,
     });
@@ -120,13 +193,23 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
     if (get().phase === 'live') {
       return { ok: true };
     }
+    if (await getActiveWorkout(['strength'])) {
+      return { ok: false, reason: 'Finish your strength workout before starting a run or walk.' };
+    }
     const ready = await ensureLocationReady();
     if (!ready.ok) {
       return ready;
     }
 
     const batteryStart = await readBatteryLevel();
-    const workout = await createWorkout({ type: activity, startedAt: Date.now(), batteryStart });
+    const created = await createWorkout({
+      type: activity,
+      source: 'gps',
+      startedAt: Date.now(),
+      batteryStart,
+      autoPause: useProfileStore.getState().profile?.autoPause ?? true,
+    });
+    const workout: GpsWorkout = { ...created, type: activity };
     set({ ...IDLE, phase: 'live', workout });
 
     try {
@@ -179,6 +262,45 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
     return { ok: true };
   },
 
+  lap: async () => {
+    const { workout, pauses } = get();
+    if (!workout || openPause(pauses)) {
+      return;
+    }
+    const lap = await insertLap(workout.id, Date.now());
+    const laps = [...get().laps, lap];
+    set({ laps });
+
+    if (voiceCuesOn()) {
+      const track = analyzeLive(workout, get().points, get().pauses, Date.now());
+      const finishedLap = computeLaps(
+        track,
+        laps.map((item) => item.t),
+      )[laps.length - 1];
+      if (finishedLap) speak(lapAnnouncement(finishedLap, distanceUnit()));
+    }
+  },
+
+  checkVoiceCues: () => {
+    const { phase, workout, points, pauses, announcedSplits } = get();
+    const now = Date.now();
+    if (phase !== 'live' || !workout || now - lastVoiceCheck < VOICE_CHECK_INTERVAL_MS) {
+      return;
+    }
+    lastVoiceCheck = now;
+
+    const unit = distanceUnit();
+    const track = analyzeLive(workout, points, pauses, now);
+    const { completed } = computeSplits(track, metersPerUnit(unit));
+    if (completed.length <= announcedSplits) {
+      return;
+    }
+    set({ announcedSplits: completed.length });
+    if (voiceCuesOn()) {
+      speak(splitAnnouncement(completed[completed.length - 1], unit, track.movingMs));
+    }
+  },
+
   finish: async () => {
     const { workout, pauses } = get();
     if (!workout) {
@@ -204,6 +326,7 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
       endAt: endedAt,
       points,
       pauses: keptPauses,
+      autoPause: workout.autoPause,
     });
 
     const finished = await finishWorkout(workout.id, {
@@ -211,6 +334,7 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
       elapsedS: Math.round(track.elapsedMs / 1000),
       movingS: Math.round(track.movingMs / 1000),
       distanceM: track.distanceM,
+      volumeKg: null,
       title: defaultWorkoutTitle(workout.type, workout.startedAt),
       batteryEnd: await readBatteryLevel(),
     });
@@ -232,9 +356,11 @@ export const useRecorderStore = create<RecorderState>()((set, get) => ({
 
 // New GPS points go straight into the store while a workout is live.
 subscribeToNewPoints((workoutId, newPoints) => {
-  const { phase, workout, points } = useRecorderStore.getState();
+  const { phase, workout, points, checkVoiceCues } = useRecorderStore.getState();
   if (phase === 'live' && workout?.id === workoutId) {
     useRecorderStore.setState({ points: [...points, ...newPoints] });
+    // This runs with the screen off too, so the voice keeps you posted.
+    checkVoiceCues();
   }
 });
 

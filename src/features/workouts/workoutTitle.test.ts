@@ -11,5 +11,6 @@ describe('defaultWorkoutTitle', () => {
     expect(defaultWorkoutTitle('walk', at(18, 30))).toBe('Evening walk');
     expect(defaultWorkoutTitle('run', at(23))).toBe('Night run');
     expect(defaultWorkoutTitle('walk', at(4, 59))).toBe('Night walk');
+    expect(defaultWorkoutTitle('strength', at(17, 30))).toBe('Evening workout');
   });
 });

@@ -137,6 +137,66 @@ describe('analyzeTrack', () => {
   });
 });
 
+describe('auto-pause', () => {
+  /** Runs at 3 m/s for 60 s, stands still (with ±1 m GPS wobble), then runs 60 s more. */
+  function runWithStop(stopSeconds: number, runAfter = 60): TrackPoint[] {
+    const speeds = [
+      ...Array.from({ length: 60 }, () => 3),
+      ...Array.from({ length: stopSeconds }, () => 0),
+      ...Array.from({ length: runAfter }, () => 3),
+    ];
+    return trackFromSpeeds(speeds).map((point, i) =>
+      i > 60 && i <= 60 + stopSeconds ? shiftEast(point, i % 2 === 0 ? 1 : -1) : point,
+    );
+  }
+
+  it('leaves a 30-second stop out of moving time and distance', () => {
+    const points = runWithStop(30);
+
+    const on = analyze(points, { autoPause: true });
+    const off = analyze(points);
+
+    // Detection needs a moment at each end of the stop, so allow a couple of seconds.
+    expect(on.diagnostics.autoPausedMs).toBeGreaterThanOrEqual(27_000);
+    expect(on.diagnostics.autoPausedMs).toBeLessThanOrEqual(30_000);
+    expect(on.movingMs).toBe(150_000 - on.diagnostics.autoPausedMs);
+    expect(Math.abs(on.distanceM - 360)).toBeLessThan(6);
+
+    // Without auto-pause the wobble while standing adds distance and the clock keeps going.
+    expect(off.movingMs).toBe(150_000);
+    expect(off.distanceM).toBeGreaterThan(on.distanceM + 10);
+  });
+
+  it('ignores a stop shorter than five seconds', () => {
+    const track = analyze(runWithStop(3), { autoPause: true });
+    expect(track.diagnostics.autoPausedMs).toBe(0);
+  });
+
+  it('keeps the clock stopped until the end while still standing', () => {
+    const points = runWithStop(20, 0);
+    const last = points[points.length - 1];
+
+    const track = analyze(points, { autoPause: true, endAt: last.t + 10_000 });
+
+    expect(track.endsStopped).toBe(true);
+    expect(currentPaceSecPerKm(track)).toBeNull();
+    // The 20 s stop plus the 10 s since the last fix, less the moment it takes to notice.
+    expect(track.diagnostics.autoPausedMs).toBeGreaterThanOrEqual(27_000);
+    expect(track.movingMs).toBeLessThanOrEqual(63_000);
+  });
+
+  it('uses a lower stop speed for walks than for runs', () => {
+    const slowWalk = straightLine(60, 0.8); // a slow stroll
+
+    expect(analyze(slowWalk, { activity: 'walk', autoPause: true }).diagnostics.autoPausedMs).toBe(
+      0,
+    );
+    expect(
+      analyze(slowWalk, { activity: 'run', autoPause: true }).diagnostics.autoPausedMs,
+    ).toBeGreaterThan(50_000);
+  });
+});
+
 describe('smooth', () => {
   it('keeps the first and last points where they are', () => {
     const points = straightLine(5, 3).map((p, i) => shiftEast(p, i * i));

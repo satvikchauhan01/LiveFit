@@ -10,12 +10,12 @@ import { Icon, type IconName } from '@/components/Icon';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { StatTile } from '@/components/StatTile';
 import { useProfile } from '@/features/profile/profileStore';
-import { useRecorderStore } from '@/features/recorder/recorderStore';
+import { analyzeLive, useRecorderStore } from '@/features/recorder/recorderStore';
 import { GpsBadge } from '@/features/tracking/GpsBadge';
 import { gpsSignalForLastFix } from '@/features/tracking/gpsSignal';
 import { openPause } from '@/features/tracking/pauses';
-import { analyzeTrack, currentPaceSecPerKm } from '@/features/tracking/pipeline';
-import { computeSplits } from '@/features/tracking/splits';
+import { currentPaceSecPerKm } from '@/features/tracking/pipeline';
+import { computeLaps, computeSplits } from '@/features/tracking/splits';
 import { TrackMap } from '@/features/tracking/TrackMap';
 import { ACTIVITY_DISPLAY } from '@/features/workouts/activities';
 import {
@@ -44,9 +44,11 @@ export default function RecordingScreen() {
   const workout = useRecorderStore((state) => state.workout);
   const points = useRecorderStore((state) => state.points);
   const pauses = useRecorderStore((state) => state.pauses);
+  const laps = useRecorderStore((state) => state.laps);
   const interrupted = useRecorderStore((state) => state.interrupted);
   const pause = useRecorderStore((state) => state.pause);
   const resume = useRecorderStore((state) => state.resume);
+  const lap = useRecorderStore((state) => state.lap);
   const finish = useRecorderStore((state) => state.finish);
   const discard = useRecorderStore((state) => state.discard);
   const unit = useProfile().distanceUnit;
@@ -57,17 +59,10 @@ export default function RecordingScreen() {
   const [busy, setBusy] = useState(false);
 
   const lastPoint = points[points.length - 1];
-  const track = useMemo(() => {
-    if (!workout) return null;
-    return analyzeTrack({
-      activity: workout.type,
-      startedAt: workout.startedAt,
-      // The GPS clock can run slightly ahead of the phone's clock; never drop the newest fix.
-      endAt: Math.max(now, lastPoint?.t ?? 0),
-      points,
-      pauses,
-    });
-  }, [workout, points, pauses, now, lastPoint]);
+  const track = useMemo(
+    () => (workout ? analyzeLive(workout, points, pauses, now) : null),
+    [workout, points, pauses, now],
+  );
 
   if (!workout || !track) {
     // Briefly true while leaving after finish or discard.
@@ -78,7 +73,10 @@ export default function RecordingScreen() {
   const paused = currentPause !== undefined;
   const signal = gpsSignalForLastFix(lastPoint, now);
   const currentPace = paused ? null : currentPaceSecPerKm(track);
+  const autoPaused = !paused && track.endsStopped;
   const split = computeSplits(track, metersPerUnit(unit)).current;
+  const lapTimes = laps.map((item) => item.t);
+  const currentLap = computeLaps(track, lapTimes)[lapTimes.length];
   const unitName = DISTANCE_UNIT_NAME[unit];
 
   const run = async (action: () => Promise<void>) => {
@@ -171,8 +169,8 @@ export default function RecordingScreen() {
         {display === 'stats' ? (
           <>
             <View style={styles.hero}>
-              <AppText variant="label" tone={paused ? 'warning' : 'muted'}>
-                {paused ? 'Paused' : 'Time'}
+              <AppText variant="label" tone={paused || autoPaused ? 'warning' : 'muted'}>
+                {paused ? 'Paused' : autoPaused ? 'Auto-paused' : 'Time'}
               </AppText>
               <AppText variant="display" numeric>
                 {formatDuration(track.movingMs)}
@@ -198,7 +196,14 @@ export default function RecordingScreen() {
                 label={`${unitName.singular} ${split.index}`}
                 value={formatDuration(split.durationMs)}
               />
-              <StatTile label="Elapsed" value={formatDuration(track.elapsedMs)} />
+              {currentLap ? (
+                <StatTile
+                  label={`Lap ${currentLap.index}`}
+                  value={formatDuration(currentLap.durationMs)}
+                />
+              ) : (
+                <StatTile label="Elapsed" value={formatDuration(track.elapsedMs)} />
+              )}
             </View>
           </>
         ) : (
@@ -236,6 +241,13 @@ export default function RecordingScreen() {
           </>
         ) : (
           <View style={styles.controlRow}>
+            <RoundButton
+              icon="flag-outline"
+              label="Lap"
+              variant="surface"
+              onPress={() => run(lap)}
+              disabled={busy}
+            />
             <RoundButton
               icon="pause"
               label="Pause"

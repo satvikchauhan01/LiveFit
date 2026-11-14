@@ -1,4 +1,4 @@
-import { type ActivityType, isActivityType } from '@/db/schema';
+import { type GpsActivityType, isGpsActivityType } from '@/db/schema';
 
 import type { PauseInterval, TrackPoint } from './types';
 
@@ -11,7 +11,7 @@ const LIVEFIT_NS = 'urn:livefit:gpx:1';
 
 export type GpxWorkout = {
   name: string;
-  activity: ActivityType | null;
+  activity: GpsActivityType | null;
   startedAt: number | null;
   endedAt: number | null;
   pauses: PauseInterval[];
@@ -158,7 +158,7 @@ export function parseGpx(xml: string, options: ParseGpxOptions = {}): GpxWorkout
 
   return {
     name: tagText(xml, 'name') ?? '',
-    activity: isActivityType(type) ? type : null,
+    activity: isGpsActivityType(type) ? type : null,
     startedAt: toTime(attribute(workoutAttributes, 'start')),
     endedAt: toTime(attribute(workoutAttributes, 'end')),
     pauses,

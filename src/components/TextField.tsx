@@ -22,13 +22,18 @@ export function TextField({ label, suffix, hint, error, onFocus, onBlur, ...inpu
         {label}
       </AppText>
       <View
-        style={[styles.field, focused && styles.fieldFocused, error ? styles.fieldError : null]}
+        style={[
+          styles.field,
+          inputProps.multiline && styles.fieldMultiline,
+          focused && styles.fieldFocused,
+          error ? styles.fieldError : null,
+        ]}
       >
         <TextInput
           accessibilityLabel={label}
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.accent}
-          style={styles.input}
+          style={[styles.input, inputProps.multiline && styles.inputMultiline]}
           onFocus={(event) => {
             setFocused(true);
             onFocus?.(event);
@@ -71,6 +76,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  fieldMultiline: {
+    alignItems: 'flex-start',
+  },
   fieldFocused: {
     borderColor: colors.accent,
   },
@@ -82,5 +90,10 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.body,
     paddingVertical: spacing.md,
+  },
+  inputMultiline: {
+    minHeight: 96,
+    // Android centres multi-line text vertically unless told otherwise.
+    textAlignVertical: 'top',
   },
 });

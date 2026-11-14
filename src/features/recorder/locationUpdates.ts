@@ -1,7 +1,7 @@
 import * as Battery from 'expo-battery';
 import * as Location from 'expo-location';
 
-import type { ActivityType } from '@/db/schema';
+import type { GpsActivityType } from '@/db/schema';
 import { LOCATION_TASK } from '@/features/tracking/locationTask';
 import { colors } from '@/theme/tokens';
 
@@ -23,13 +23,13 @@ export function isLocationTaskRunning(): Promise<boolean> {
   return Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
 }
 
-const ACTIVITY_NAMES: Record<ActivityType, string> = { run: 'run', walk: 'walk' };
+const ACTIVITY_NAMES: Record<GpsActivityType, string> = { run: 'run', walk: 'walk' };
 
 /**
  * Starts GPS recording as an Android foreground service. Must be called while
  * the app is on screen: Android doesn't let apps start one from the background.
  */
-export async function startLocationUpdates(activity: ActivityType): Promise<void> {
+export async function startLocationUpdates(activity: GpsActivityType): Promise<void> {
   if (await isLocationTaskRunning()) {
     return;
   }

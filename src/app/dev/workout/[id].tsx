@@ -7,6 +7,7 @@ import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ListRow } from '@/components/ListRow';
 import { Screen } from '@/components/Screen';
+import { isGpsActivityType } from '@/db/schema';
 import { GPS_SETTINGS, MAX_SPEED_MPS } from '@/features/tracking/config';
 import { shareWorkoutAsGpx } from '@/features/tracking/gpxExport';
 import { analyzeTrack } from '@/features/tracking/pipeline';
@@ -49,17 +50,21 @@ export default function WorkoutDiagnosticsScreen() {
       detail.workout.startedAt)
     : 0;
 
+  // Diagnostics only make sense for workouts with a route.
+  const activity = detail && isGpsActivityType(detail.workout.type) ? detail.workout.type : null;
+
   const track = useMemo(() => {
-    if (!detail) return null;
+    if (!detail || !activity) return null;
     const { workout, points, pauses } = detail;
     return analyzeTrack({
-      activity: workout.type,
+      activity,
       startedAt: workout.startedAt,
       endAt,
       points,
       pauses,
+      autoPause: workout.autoPause,
     });
-  }, [detail, endAt]);
+  }, [detail, activity, endAt]);
 
   if (detail === undefined) {
     return (
@@ -68,7 +73,7 @@ export default function WorkoutDiagnosticsScreen() {
       </View>
     );
   }
-  if (!detail || !track) {
+  if (!detail || !track || !activity) {
     return (
       <View style={styles.centered}>
         <AppText tone="muted">This workout no longer exists.</AppText>
@@ -130,7 +135,7 @@ export default function WorkoutDiagnosticsScreen() {
         />
         <ListRow
           title="Dropped: too fast"
-          subtitle={`Faster than ${MAX_SPEED_MPS[workout.type]} m/s`}
+          subtitle={`Faster than ${MAX_SPEED_MPS[activity]} m/s`}
           value={String(diagnostics.dropped.tooFast)}
         />
         <ListRow title="Dropped: while paused" value={String(diagnostics.dropped.paused)} />
@@ -153,6 +158,11 @@ export default function WorkoutDiagnosticsScreen() {
         />
         <ListRow title="Average accuracy" value={formatMeters(diagnostics.averageAccuracyM)} />
         <ListRow title="Pauses" value={String(pauses.length)} />
+        <ListRow
+          title="Auto-paused"
+          subtitle={workout.autoPause ? 'Time left out while standing still' : 'Auto-pause was off'}
+          value={formatDuration(diagnostics.autoPausedMs)}
+        />
         <ListRow
           title="Battery use"
           subtitle="Needs at least 5 minutes of recording"

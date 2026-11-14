@@ -1,31 +1,32 @@
 import * as Crypto from 'expo-crypto';
-import { and, asc, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import {
+  ACTIVITY_TYPES,
   type ActivityType,
+  GPS_ACTIVITY_TYPES,
   trackPoints,
   type Workout,
+  type WorkoutLap,
+  workoutLaps,
   type WorkoutPause,
   workoutPauses,
   workouts,
 } from '@/db/schema';
+import { type ExerciseLog, getExerciseLogs } from '@/features/strength/strengthRepository';
 import type { TrackPoint } from '@/features/tracking/types';
-
-function currentTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
+import { deviceTimeZone } from '@/lib/dates';
 
 // --- Workouts ---------------------------------------------------------------
 
 export async function createWorkout(input: {
   type: ActivityType;
+  source: Workout['source'];
   startedAt: number;
   batteryStart: number | null;
+  /** Runs and walks: whether auto-pause is on (it can't change mid-workout). */
+  autoPause?: boolean;
 }): Promise<Workout> {
   const now = Date.now();
   const rows = await db
@@ -34,10 +35,12 @@ export async function createWorkout(input: {
       // Made on the device, so the id stays the same after it's synced later.
       id: Crypto.randomUUID(),
       type: input.type,
+      source: input.source,
       status: 'active',
       startedAt: input.startedAt,
-      timezone: currentTimeZone(),
+      timezone: deviceTimeZone(),
       batteryStart: input.batteryStart,
+      autoPause: input.autoPause ?? false,
       createdAt: now,
       updatedAt: now,
     })
@@ -45,22 +48,29 @@ export async function createWorkout(input: {
   return rows[0];
 }
 
-/** The workout being recorded, if any. There is at most one. */
-export async function getActiveWorkout(): Promise<Workout | null> {
+function whereActive(types: readonly ActivityType[]) {
+  return and(eq(workouts.status, 'active'), inArray(workouts.type, [...types]));
+}
+
+/** The workout in progress of one of these types, if any. Only one runs at a time. */
+export async function getActiveWorkout(
+  types: readonly ActivityType[] = ACTIVITY_TYPES,
+): Promise<Workout | null> {
   const rows = await db
     .select()
     .from(workouts)
-    .where(eq(workouts.status, 'active'))
+    .where(whereActive(types))
     .orderBy(desc(workouts.startedAt))
     .limit(1);
   return rows[0] ?? null;
 }
 
-export async function getActiveWorkoutId(): Promise<string | null> {
+/** The run or walk being recorded: where the background GPS task saves points. */
+export async function getActiveGpsWorkoutId(): Promise<string | null> {
   const rows = await db
     .select({ id: workouts.id })
     .from(workouts)
-    .where(eq(workouts.status, 'active'))
+    .where(whereActive(GPS_ACTIVITY_TYPES))
     .orderBy(desc(workouts.startedAt))
     .limit(1);
   return rows[0]?.id ?? null;
@@ -71,19 +81,55 @@ export async function getWorkout(id: string): Promise<Workout | null> {
   return rows[0] ?? null;
 }
 
+/** What History and Home need: finished workouts, filtered by activity and start date. */
+export type WorkoutFilter = {
+  /** Only these activities; all of them when left out. */
+  types?: ActivityType[];
+  /** Only workouts that started at or after this time (Unix ms). */
+  fromMs?: number;
+};
+
+function whereFinished(filter: WorkoutFilter) {
+  const conditions = [eq(workouts.status, 'finished')];
+  if (filter.types && filter.types.length > 0) {
+    conditions.push(inArray(workouts.type, filter.types));
+  }
+  if (filter.fromMs !== undefined) {
+    conditions.push(gte(workouts.startedAt, filter.fromMs));
+  }
+  return and(...conditions);
+}
+
+/** The columns a list row needs; leaving out the rest keeps big lists light. */
+const listColumns = {
+  id: workouts.id,
+  type: workouts.type,
+  title: workouts.title,
+  startedAt: workouts.startedAt,
+  timezone: workouts.timezone,
+  distanceM: workouts.distanceM,
+  movingS: workouts.movingS,
+  volumeKg: workouts.volumeKg,
+};
+
+export type WorkoutListItem = Pick<Workout, keyof typeof listColumns>;
+
 /** Finished workouts, newest first. */
-export async function listFinishedWorkouts(limit?: number): Promise<Workout[]> {
+export async function listWorkouts(
+  filter: WorkoutFilter = {},
+  limit?: number,
+): Promise<WorkoutListItem[]> {
   const query = db
-    .select()
+    .select(listColumns)
     .from(workouts)
-    .where(eq(workouts.status, 'finished'))
+    .where(whereFinished(filter))
     .orderBy(desc(workouts.startedAt));
   return limit !== undefined ? query.limit(limit) : query;
 }
 
 export type WorkoutSummaryFields = Pick<
   Workout,
-  'endedAt' | 'elapsedS' | 'movingS' | 'distanceM' | 'title' | 'batteryEnd'
+  'endedAt' | 'elapsedS' | 'movingS' | 'distanceM' | 'volumeKg' | 'title' | 'batteryEnd'
 >;
 
 export async function finishWorkout(id: string, summary: WorkoutSummaryFields): Promise<Workout> {
@@ -95,27 +141,37 @@ export async function finishWorkout(id: string, summary: WorkoutSummaryFields): 
   return rows[0];
 }
 
-export async function updateWorkoutTitle(id: string, title: string): Promise<void> {
-  await db.update(workouts).set({ title, updatedAt: Date.now() }).where(eq(workouts.id, id));
+export async function updateWorkoutDetails(
+  id: string,
+  details: Pick<Workout, 'title' | 'notes'>,
+): Promise<void> {
+  await db
+    .update(workouts)
+    .set({ ...details, updatedAt: Date.now() })
+    .where(eq(workouts.id, id));
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
-  // Track points and pauses go too, thanks to ON DELETE CASCADE.
+  // Track points, pauses and strength sets go too, thanks to ON DELETE CASCADE.
   await db.delete(workouts).where(eq(workouts.id, id));
 }
 
 export type Totals = { count: number; distanceM: number; movingS: number };
 
-/** Count, distance and time of finished workouts that started at or after `fromMs`. */
-export async function getTotalsSince(fromMs: number): Promise<Totals> {
+/**
+ * Count, distance and time of the matching workouts, added up by SQLite
+ * (an aggregate query) instead of loading every row into JavaScript.
+ */
+export async function getTotals(filter: WorkoutFilter = {}): Promise<Totals> {
   const rows = await db
     .select({
       count: sql<number>`count(*)`,
+      // SUM of no rows is NULL, so fall back to 0.
       distanceM: sql<number>`coalesce(sum(${workouts.distanceM}), 0)`,
       movingS: sql<number>`coalesce(sum(${workouts.movingS}), 0)`,
     })
     .from(workouts)
-    .where(and(eq(workouts.status, 'finished'), gte(workouts.startedAt, fromMs)));
+    .where(whereFinished(filter));
   return rows[0] ?? { count: 0, distanceM: 0, movingS: 0 };
 }
 
@@ -182,14 +238,45 @@ export async function deletePause(pauseId: number): Promise<void> {
   await db.delete(workoutPauses).where(eq(workoutPauses.id, pauseId));
 }
 
+// --- Laps -------------------------------------------------------------------------
+
+export async function getLaps(workoutId: string): Promise<WorkoutLap[]> {
+  return db
+    .select()
+    .from(workoutLaps)
+    .where(eq(workoutLaps.workoutId, workoutId))
+    .orderBy(asc(workoutLaps.t));
+}
+
+export async function insertLap(workoutId: string, t: number): Promise<WorkoutLap> {
+  const rows = await db.insert(workoutLaps).values({ workoutId, t }).returning();
+  return rows[0];
+}
+
+export type WorkoutDetail = {
+  workout: Workout;
+  /** Runs and walks: the route. Empty for strength. */
+  points: TrackPoint[];
+  pauses: WorkoutPause[];
+  /** Runs and walks: manual lap presses. */
+  laps: WorkoutLap[];
+  /** Strength: exercises and sets. Empty for runs and walks. */
+  exercises: ExerciseLog[];
+};
+
 /** Everything needed to show one workout. */
-export async function loadWorkoutDetail(id: string) {
+export async function loadWorkoutDetail(id: string): Promise<WorkoutDetail | null> {
   const workout = await getWorkout(id);
   if (!workout) {
     return null;
   }
-  const [points, pauses] = await Promise.all([getTrackPoints(id), getPauses(id)]);
-  return { workout, points, pauses };
+  if (workout.type === 'strength') {
+    return { workout, points: [], pauses: [], laps: [], exercises: await getExerciseLogs(id) };
+  }
+  const [points, pauses, laps] = await Promise.all([
+    getTrackPoints(id),
+    getPauses(id),
+    getLaps(id),
+  ]);
+  return { workout, points, pauses, laps, exercises: [] };
 }
-
-export type WorkoutDetail = NonNullable<Awaited<ReturnType<typeof loadWorkoutDetail>>>;

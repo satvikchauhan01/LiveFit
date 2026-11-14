@@ -1,10 +1,12 @@
 import { router } from 'expo-router';
-import { Alert, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { Card } from '@/components/Card';
 import { Icon, type IconName } from '@/components/Icon';
 import { Screen } from '@/components/Screen';
+import { startStrengthWorkout } from '@/features/strength/startStrengthWorkout';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 type ActivityOption = {
@@ -27,12 +29,21 @@ const ACTIVITIES: ActivityOption[] = [
 ];
 
 export default function ActivityPickerScreen() {
-  const handlePick = (activity: ActivityOption) => {
-    if (activity.id === 'strength') {
-      Alert.alert('Strength', 'Strength logging is coming in a later build.');
+  const [starting, setStarting] = useState(false);
+
+  const handlePick = async (activity: ActivityOption) => {
+    if (activity.id !== 'strength') {
+      router.push({ pathname: '/record/ready', params: { activity: activity.id } });
       return;
     }
-    router.push({ pathname: '/record/ready', params: { activity: activity.id } });
+    if (starting) return;
+    setStarting(true);
+    // No GPS or countdown for strength: the workout opens straight away.
+    if (await startStrengthWorkout()) {
+      router.replace('/strength');
+    } else {
+      setStarting(false);
+    }
   };
 
   return (

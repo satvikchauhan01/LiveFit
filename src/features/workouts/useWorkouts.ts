@@ -1,47 +1,21 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
-import type { Workout } from '@/db/schema';
+import { useQueryOnFocus } from '@/lib/useQueryOnFocus';
 
-import { getTotalsSince, listFinishedWorkouts, type Totals } from './workoutRepository';
+import {
+  getTotals,
+  listWorkouts,
+  type Totals,
+  type WorkoutFilter,
+  type WorkoutListItem,
+} from './workoutRepository';
 
-/**
- * Finished workouts, newest first, reloaded each time the screen comes into view
- * (so a workout saved a moment ago shows up when you return to the tab).
- */
-export function useFinishedWorkouts(limit?: number): Workout[] | null {
-  const [list, setList] = useState<Workout[] | null>(null);
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      listFinishedWorkouts(limit)
-        .then((rows) => {
-          if (!cancelled) setList(rows);
-        })
-        .catch((error: unknown) => console.warn('[workouts] load failed', error));
-      return () => {
-        cancelled = true;
-      };
-    }, [limit]),
-  );
-  return list;
+/** Finished workouts matching `filter`, newest first. Keep `filter` stable with useMemo. */
+export function useWorkoutList(filter: WorkoutFilter, limit?: number): WorkoutListItem[] | null {
+  return useQueryOnFocus(useCallback(() => listWorkouts(filter, limit), [filter, limit]));
 }
 
-/** Totals for finished workouts since `fromMs`, reloaded when the screen comes into view. */
-export function useTotalsSince(fromMs: number): Totals | null {
-  const [totals, setTotals] = useState<Totals | null>(null);
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      getTotalsSince(fromMs)
-        .then((result) => {
-          if (!cancelled) setTotals(result);
-        })
-        .catch((error: unknown) => console.warn('[workouts] totals failed', error));
-      return () => {
-        cancelled = true;
-      };
-    }, [fromMs]),
-  );
-  return totals;
+/** Count, distance and time of the workouts matching `filter`. */
+export function useWorkoutTotals(filter: WorkoutFilter): Totals | null {
+  return useQueryOnFocus(useCallback(() => getTotals(filter), [filter]));
 }

@@ -7,7 +7,20 @@ import { type Profile, profile } from '@/db/schema';
 const PROFILE_ID = 1;
 
 export type ProfileChanges = Partial<
-  Pick<Profile, 'displayName' | 'distanceUnit' | 'weightUnit' | 'weightKg' | 'onboardedAt'>
+  Pick<
+    Profile,
+    | 'displayName'
+    | 'distanceUnit'
+    | 'weightUnit'
+    | 'weightKg'
+    | 'onboardedAt'
+    | 'weeklyGoal'
+    | 'restSeconds'
+    | 'autoPause'
+    | 'voiceCues'
+    | 'reminderDays'
+    | 'reminderMinutes'
+  >
 >;
 
 /** Reads the profile, creating it with defaults on first launch. */

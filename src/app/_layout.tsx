@@ -11,6 +11,12 @@ import { AppText } from '@/components/AppText';
 import { db } from '@/db/client';
 import { useProfileStore } from '@/features/profile/profileStore';
 import { useRecorderStore } from '@/features/recorder/recorderStore';
+import { parseReminderDays } from '@/features/reminders/reminderSchedule';
+import { setUpReminderChannel, syncReminders } from '@/features/reminders/reminders';
+import { setUpRestAlertChannel } from '@/features/strength/restAlerts';
+import { seedBuiltInExercises } from '@/features/strength/strengthRepository';
+import { useStrengthStore } from '@/features/strength/strengthStore';
+import { startCrashReporting, withCrashReporting } from '@/lib/crashReporting';
 import { colors, spacing } from '@/theme/tokens';
 
 import migrations from '../../drizzle/migrations';
@@ -18,25 +24,47 @@ import migrations from '../../drizzle/migrations';
 // Keep the splash screen up until the database is ready, the profile is loaded
 // and any unfinished workout is found, so the first screen is the right one.
 SplashScreen.preventAutoHideAsync();
+startCrashReporting();
 
-export default function RootLayout() {
+function RootLayout() {
   const migration = useMigrations(db, migrations);
   const profile = useProfileStore((state) => state.profile);
   const loadProfile = useProfileStore((state) => state.load);
   const recorderRestored = useRecorderStore((state) => state.restored);
   const restoreRecorder = useRecorderStore((state) => state.restore);
+  const strengthRestored = useStrengthStore((state) => state.restored);
+  const restoreStrength = useStrengthStore((state) => state.restore);
   const [loadError, setLoadError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (migration.success) {
-      Promise.all([loadProfile(), restoreRecorder()]).catch((error: unknown) =>
-        setLoadError(error instanceof Error ? error : new Error(String(error))),
+      // Exercises first: restoring a strength workout reads them.
+      seedBuiltInExercises()
+        .then(() => Promise.all([loadProfile(), restoreRecorder(), restoreStrength()]))
+        .catch((error: unknown) =>
+          setLoadError(error instanceof Error ? error : new Error(String(error))),
+        );
+      Promise.all([setUpRestAlertChannel(), setUpReminderChannel()]).catch((error: unknown) =>
+        console.warn('[notifications] channel setup failed', error),
       );
     }
-  }, [migration.success, loadProfile, restoreRecorder]);
+  }, [migration.success, loadProfile, restoreRecorder, restoreStrength]);
+
+  // Once per launch, make the scheduled reminders match the saved settings
+  // (e.g. if notification permission was granted in system settings since).
+  const remindersReady = profile !== null;
+  useEffect(() => {
+    if (!remindersReady) return;
+    const saved = useProfileStore.getState().profile;
+    if (saved) {
+      syncReminders(parseReminderDays(saved.reminderDays), saved.reminderMinutes).catch(
+        (error: unknown) => console.warn('[reminders] could not schedule', error),
+      );
+    }
+  }, [remindersReady]);
 
   const failure = migration.error ?? loadError;
-  const ready = profile !== null && recorderRestored;
+  const ready = profile !== null && recorderRestored && strengthRestored;
 
   useEffect(() => {
     if (ready || failure) {
@@ -80,7 +108,28 @@ export default function RootLayout() {
               gestureEnabled: false,
             }}
           />
+          <Stack.Screen
+            name="strength"
+            options={{
+              headerShown: false,
+              presentation: 'fullScreenModal',
+              animation: 'slide_from_bottom',
+              gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
+            name="exercises/pick"
+            options={{ presentation: 'modal', title: 'Add exercise' }}
+          />
+          <Stack.Screen
+            name="exercises/new"
+            options={{ presentation: 'modal', title: 'New exercise' }}
+          />
           <Stack.Screen name="workout/[id]" options={{ title: '' }} />
+          <Stack.Screen
+            name="workout/[id]/edit"
+            options={{ presentation: 'modal', title: 'Edit workout' }}
+          />
 
           <Stack.Protected guard={__DEV__}>
             <Stack.Screen name="dev/components" options={{ title: 'Components' }} />
@@ -95,6 +144,8 @@ export default function RootLayout() {
     </>
   );
 }
+
+export default withCrashReporting(RootLayout);
 
 function StartupError({ message }: { message: string }) {
   return (

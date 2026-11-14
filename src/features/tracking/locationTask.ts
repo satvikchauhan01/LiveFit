@@ -1,7 +1,7 @@
 import type { LocationObject } from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
-import { getActiveWorkoutId, insertTrackPoints } from '@/features/workouts/workoutRepository';
+import { getActiveGpsWorkoutId, insertTrackPoints } from '@/features/workouts/workoutRepository';
 
 import { publishNewPoints } from './trackingEvents';
 import type { TrackPoint } from './types';
@@ -40,7 +40,7 @@ TaskManager.defineTask<LocationTaskData>(LOCATION_TASK, async ({ data, error }) 
 
   // Read from the database rather than memory: after a background restart,
   // the database is the only thing that knows which workout is running.
-  const workoutId = await getActiveWorkoutId();
+  const workoutId = await getActiveGpsWorkoutId();
   if (!workoutId) {
     return; // updates can still arrive for a moment after a workout ends
   }

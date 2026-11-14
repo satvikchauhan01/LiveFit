@@ -1,3 +1,4 @@
+import { localDateTime, MONTH_SHORT, WEEKDAY_SHORT } from './dates';
 import {
   type DistanceUnit,
   fromKg,
@@ -50,6 +51,25 @@ export function formatPace(secondsPerKm: number | null, unit: DistanceUnit = 'km
   return value === '–' ? value : `${value} /${unit}`;
 }
 
+/** 1 → "1 workout", 3 → "3 workouts" */
+export function formatWorkoutCount(count: number): string {
+  return `${count} ${count === 1 ? 'workout' : 'workouts'}`;
+}
+
+/** "3 workouts · 12.40 km · 1:05:12". Distance is left out when there is none (strength only). */
+export function formatTotals(
+  totals: { count: number; distanceM: number; movingS: number },
+  unit: DistanceUnit,
+): string {
+  return [
+    formatWorkoutCount(totals.count),
+    totals.distanceM > 0 ? formatDistance(totals.distanceM, unit) : null,
+    formatDuration(totals.movingS * 1000),
+  ]
+    .filter((part) => part !== null)
+    .join(' · ');
+}
+
 /** 72.5 kg → "72.5 kg" or "159.8 lb" */
 export function formatWeight(kg: number | null, unit: WeightUnit): string {
   if (kg === null) {
@@ -62,9 +82,18 @@ export function formatMeters(meters: number | null): string {
   return meters === null ? '–' : `${Math.round(meters)} m`;
 }
 
-export function formatDateTime(ms: number): string {
-  const date = new Date(ms);
-  return `${date.toLocaleDateString()} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+/**
+ * "Mon 9 Nov · 07:05", in the time zone the workout was recorded in.
+ * The year is added when it isn't the current one.
+ */
+export function formatWorkoutDate(
+  ms: number,
+  timeZone?: string | null,
+  now: number = Date.now(),
+): string {
+  const local = localDateTime(ms, timeZone);
+  const year = local.year !== localDateTime(now, timeZone).year ? ` ${local.year}` : '';
+  return `${WEEKDAY_SHORT[local.weekday]} ${local.day} ${MONTH_SHORT[local.month - 1]}${year} · ${pad2(local.hour)}:${pad2(local.minute)}`;
 }
 
 /** "14:05" in local time. */

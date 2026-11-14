@@ -4,39 +4,52 @@ import { StyleSheet, View } from 'react-native';
 import { AppText } from '@/components/AppText';
 import { Card } from '@/components/Card';
 import { StatTile } from '@/components/StatTile';
+import type { GpsActivityType } from '@/db/schema';
 import { analyzeTrack } from '@/features/tracking/pipeline';
-import { computeSplits, splitsForSummary } from '@/features/tracking/splits';
+import { computeLaps, computeSplits, splitsForSummary } from '@/features/tracking/splits';
 import { TrackMap } from '@/features/tracking/TrackMap';
 import { formatDistance, formatDuration, formatPace } from '@/lib/format';
 import { type DistanceUnit, metersPerUnit } from '@/lib/units';
 import { spacing } from '@/theme/tokens';
 
+import { LapsTable } from './LapsTable';
 import { SplitsTable } from './SplitsTable';
 import type { WorkoutDetail } from './workoutRepository';
 
 type Props = {
   detail: WorkoutDetail;
+  /** Passed separately because only runs and walks have a route. */
+  activity: GpsActivityType;
   unit: DistanceUnit;
 };
 
 /** Route, headline numbers and splits of a finished workout. */
-export function WorkoutSummary({ detail, unit }: Props) {
-  const { workout, points, pauses } = detail;
+export function WorkoutSummary({ detail, activity, unit }: Props) {
+  const { workout, points, pauses, laps } = detail;
 
   const track = useMemo(
     () =>
       analyzeTrack({
-        activity: workout.type,
+        activity,
         startedAt: workout.startedAt,
         endAt: workout.endedAt ?? workout.startedAt,
         points,
         pauses,
+        autoPause: workout.autoPause,
       }),
-    [workout.type, workout.startedAt, workout.endedAt, points, pauses],
+    [activity, workout.startedAt, workout.endedAt, workout.autoPause, points, pauses],
   );
   const splits = useMemo(
     () => splitsForSummary(computeSplits(track, metersPerUnit(unit))),
     [track, unit],
+  );
+  const lapSplits = useMemo(
+    () =>
+      computeLaps(
+        track,
+        laps.map((lap) => lap.t),
+      ),
+    [track, laps],
   );
 
   return (
@@ -60,6 +73,15 @@ export function WorkoutSummary({ detail, unit }: Props) {
         </AppText>
         <SplitsTable splits={splits} unit={unit} />
       </Card>
+
+      {lapSplits.length > 0 && (
+        <Card>
+          <AppText variant="label" tone="muted">
+            Laps
+          </AppText>
+          <LapsTable laps={lapSplits} unit={unit} />
+        </Card>
+      )}
     </>
   );
 }

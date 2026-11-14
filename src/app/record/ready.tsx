@@ -8,7 +8,7 @@ import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { Icon } from '@/components/Icon';
 import { Screen } from '@/components/Screen';
-import { isActivityType } from '@/db/schema';
+import { isGpsActivityType } from '@/db/schema';
 import { useRecorderStore } from '@/features/recorder/recorderStore';
 import { GpsBadge } from '@/features/tracking/GpsBadge';
 import { gpsSignalFor, isGoodEnoughToStart } from '@/features/tracking/gpsSignal';
@@ -20,7 +20,7 @@ const COUNTDOWN_FROM = 3;
 
 export default function ReadyScreen() {
   const params = useLocalSearchParams<{ activity?: string }>();
-  const activity = isActivityType(params.activity) ? params.activity : 'run';
+  const activity = isGpsActivityType(params.activity) ? params.activity : 'run';
   const display = ACTIVITY_DISPLAY[activity];
 
   const start = useRecorderStore((state) => state.start);

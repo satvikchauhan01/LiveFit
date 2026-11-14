@@ -4,7 +4,7 @@ import { METERS_PER_MILE } from '@/lib/units';
 
 import { straightLine, T0 } from './__fixtures__/trackBuilder';
 import { analyzeTrack } from './pipeline';
-import { computeSplits, splitsForSummary } from './splits';
+import { computeLaps, computeSplits, splitsForSummary } from './splits';
 import type { PauseInterval, TrackPoint } from './types';
 
 function analyze(points: TrackPoint[], pauses: PauseInterval[] = []) {
@@ -71,6 +71,22 @@ describe('computeSplits', () => {
     const total = [...completed, current].reduce((sum, split) => sum + split.durationMs, 0);
 
     expect(total).toBeCloseTo(track.movingMs, 3);
+  });
+});
+
+describe('computeLaps', () => {
+  it('makes one lap per press, plus the lap in progress', () => {
+    const track = analyze(straightLine(300, 4)); // 1200 m in 300 s
+
+    const laps = computeLaps(track, [T0 + 250_000, T0 + 100_000]); // order doesn't matter
+
+    expect(laps.map((lap) => Math.round(lap.distanceM))).toEqual([400, 600, 200]);
+    expect(laps.map((lap) => lap.durationMs)).toEqual([100_000, 150_000, 50_000]);
+    expect(laps.map((lap) => lap.partial)).toEqual([false, false, true]);
+  });
+
+  it('has no laps until Lap is pressed', () => {
+    expect(computeLaps(analyze(straightLine(60, 3)), [])).toEqual([]);
   });
 });
 

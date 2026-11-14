@@ -5,21 +5,29 @@ import { StyleSheet, View } from 'react-native';
 
 import { Icon } from '@/components/Icon';
 import { useRecorderStore } from '@/features/recorder/recorderStore';
+import { useStrengthStore } from '@/features/strength/strengthStore';
+import { useActiveSession } from '@/features/workouts/activeSession';
 import { colors, radius } from '@/theme/tokens';
 
 export default function TabsLayout() {
-  const recording = useRecorderStore((state) => state.phase === 'live');
-  const reopenPending = useRecorderStore((state) => state.reopenPending);
-  const acknowledgeReopen = useRecorderStore((state) => state.acknowledgeReopen);
+  const active = useActiveSession();
+  const recording = active !== null;
+  const gpsReopen = useRecorderStore((state) => state.reopenPending);
+  const acknowledgeGpsReopen = useRecorderStore((state) => state.acknowledgeReopen);
+  const strengthReopen = useStrengthStore((state) => state.reopenPending);
+  const acknowledgeStrengthReopen = useStrengthStore((state) => state.acknowledgeReopen);
 
-  // A workout was still running when the app last closed (or crashed):
-  // go straight back to it, where it can be resumed or finished.
+  // A workout was still open when the app last closed (or crashed):
+  // go straight back to it, where it can be carried on or finished.
   useEffect(() => {
-    if (reopenPending) {
-      acknowledgeReopen();
+    if (gpsReopen) {
+      acknowledgeGpsReopen();
       router.push('/recording');
+    } else if (strengthReopen) {
+      acknowledgeStrengthReopen();
+      router.push('/strength');
     }
-  }, [reopenPending, acknowledgeReopen]);
+  }, [gpsReopen, acknowledgeGpsReopen, strengthReopen, acknowledgeStrengthReopen]);
 
   return (
     <Tabs
@@ -51,7 +59,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="start"
         options={{
-          title: recording ? 'Recording' : 'Record',
+          title: recording ? 'In progress' : 'Record',
           tabBarIcon: () => (
             <View style={styles.recordButton}>
               <Icon
@@ -67,7 +75,7 @@ export default function TabsLayout() {
           // modal, or returns to the workout that's being recorded.
           tabPress: (event) => {
             event.preventDefault();
-            router.push(recording ? '/recording' : '/record');
+            router.push(active ? active.route : '/record');
           },
         }}
       />

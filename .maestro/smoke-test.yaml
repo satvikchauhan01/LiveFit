@@ -1,0 +1,62 @@
+# Smoke test: onboard → record a short simulated run → find it in History.
+#
+# Needs an Android emulator with LiveFit installed (`npx expo run:android`)
+# and Maestro (https://maestro.dev). Then, from the project folder:
+#   maestro test .maestro/smoke-test.yaml
+#
+# The run is simulated by moving the emulator's GPS along a 200 m line.
+appId: com.livefit.app
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: allow
+
+# Onboarding (permissions are already granted, so no system dialogs appear).
+- tapOn: 'Get started'
+- tapOn: 'Continue'
+- tapOn: 'Skip'
+- tapOn: 'Allow location'
+- extendedWaitUntil:
+    visible: 'Good (morning|afternoon|evening).*'
+    timeout: 10000
+
+# Start a run at the beginning of the simulated route.
+- setLocation:
+    latitude: 48.8566
+    longitude: 2.3522
+- tapOn: 'Record'
+- tapOn: 'Run'
+- extendedWaitUntil:
+    visible: 'Start'
+    timeout: 20000
+- tapOn: 'Start'
+# Only appears if the emulator's GPS fix looks weak.
+- tapOn:
+    text: 'Start anyway'
+    optional: true
+- extendedWaitUntil:
+    visible: 'Pause'
+    timeout: 15000
+
+# Move 200 m north at 5 m/s (about 40 seconds).
+- travel:
+    points:
+      - '48.8566, 2.3522'
+      - '48.8584, 2.3522'
+    speed: 5
+    timeout: 90000
+
+# Pause, finish, confirm (the dialog's confirm button), save.
+- tapOn: 'Pause'
+- tapOn: 'Finish'
+- tapOn:
+    id: 'android:id/button1'
+- extendedWaitUntil:
+    visible: 'Workout saved'
+    timeout: 10000
+- tapOn: 'Save'
+
+# The run is in History.
+- tapOn: 'History'
+- assertVisible: '(Morning|Afternoon|Evening|Night) run'

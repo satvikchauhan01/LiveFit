@@ -18,7 +18,12 @@ export type SplitResult = {
   current: Split;
 };
 
-function makeSplit(index: number, distanceM: number, durationMs: number, partial: boolean): Split {
+export function makeSplit(
+  index: number,
+  distanceM: number,
+  durationMs: number,
+  partial: boolean,
+): Split {
   return {
     index,
     distanceM,
@@ -44,7 +49,7 @@ export function computeSplits(track: WorkoutTrack, splitLengthM: number): SplitR
       // Across a pause the distance doesn't grow, so no boundary can be crossed there.
       while (previous && point.distanceM >= boundaryM && point.distanceM > previous.distanceM) {
         const fraction = (boundaryM - previous.distanceM) / (point.distanceM - previous.distanceM);
-        const crossedAtMs = previous.activeMs + fraction * (point.activeMs - previous.activeMs);
+        const crossedAtMs = previous.movingMs + fraction * (point.movingMs - previous.movingMs);
         completed.push(
           makeSplit(completed.length + 1, splitLengthM, crossedAtMs - lastBoundaryMs, false),
         );
@@ -62,6 +67,43 @@ export function computeSplits(track: WorkoutTrack, splitLengthM: number): SplitR
     true,
   );
   return { completed, current };
+}
+
+/** Distance and moving time at the last fix at or before `t` (at most a second out). */
+function progressAt(track: WorkoutTrack, t: number): { distanceM: number; movingMs: number } {
+  let progress = { distanceM: 0, movingMs: 0 };
+  for (const segment of track.segments) {
+    for (const point of segment) {
+      if (point.t > t) return progress;
+      progress = { distanceM: point.distanceM, movingMs: point.movingMs };
+    }
+  }
+  return progress;
+}
+
+/**
+ * Manual laps: one lap per Lap press, plus the stretch from the last press to
+ * the end (or to now, while recording), which is the lap in progress.
+ * No presses means no laps.
+ */
+export function computeLaps(track: WorkoutTrack, lapTimes: number[]): Split[] {
+  if (lapTimes.length === 0) {
+    return [];
+  }
+  const boundaries = [...lapTimes].sort((a, b) => a - b).map((t) => progressAt(track, t));
+  boundaries.push({ distanceM: track.distanceM, movingMs: track.movingMs });
+
+  let previous = { distanceM: 0, movingMs: 0 };
+  return boundaries.map((boundary, i) => {
+    const lap = makeSplit(
+      i + 1,
+      boundary.distanceM - previous.distanceM,
+      Math.max(0, boundary.movingMs - previous.movingMs),
+      i === boundaries.length - 1,
+    );
+    previous = boundary;
+    return lap;
+  });
 }
 
 /** Splits to show on a summary: the full ones, plus the leftover if it's long enough to matter. */

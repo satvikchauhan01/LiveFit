@@ -2,23 +2,51 @@ import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Platform, StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { Card } from '@/components/Card';
+import { Chip } from '@/components/Chip';
 import { ListRow } from '@/components/ListRow';
 import { Screen } from '@/components/Screen';
 import { SegmentedControl } from '@/components/SegmentedControl';
+import { Stepper } from '@/components/Stepper';
+import { SwitchRow } from '@/components/SwitchRow';
 import { TextField } from '@/components/TextField';
 import { useProfile, useProfileStore } from '@/features/profile/profileStore';
 import { parseWeightInput } from '@/features/profile/weight';
-import { useRecorderStore } from '@/features/recorder/recorderStore';
+import {
+  describeReminders,
+  formatClock,
+  formatReminderDays,
+  parseReminderDays,
+  toggleDay,
+  WEEKDAYS,
+} from '@/features/reminders/reminderSchedule';
+import { syncReminders } from '@/features/reminders/reminders';
+import {
+  type AlertPermission,
+  getAlertPermission,
+  hasExactTiming,
+  requestAlertPermission,
+  requestExactTiming,
+} from '@/features/strength/restAlerts';
+import { formatSeconds } from '@/features/strength/strengthFormat';
+import { useActiveSession } from '@/features/workouts/activeSession';
+import { formatWorkoutCount } from '@/lib/format';
 import { fromKg, type WeightUnit } from '@/lib/units';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 function weightToText(weightKg: number | null, unit: WeightUnit): string {
   return weightKg !== null ? fromKg(weightKg, unit).toFixed(1) : '';
 }
+
+const ALERT_PERMISSION_LABEL: Record<AlertPermission, string> = {
+  granted: 'Allowed',
+  undetermined: 'Not asked yet',
+  denied: 'Not allowed',
+  blocked: 'Blocked in settings',
+};
 
 function describePermission(permission: Location.LocationPermissionResponse): string {
   if (permission.granted) return 'Allowed';
@@ -69,17 +97,57 @@ function WeightField({ weightKg, unit, onSave }: WeightFieldProps) {
 export default function ProfileScreen() {
   const profile = useProfile();
   const update = useProfileStore((state) => state.update);
-  const recording = useRecorderStore((state) => state.phase === 'live');
+  const recording = useActiveSession() !== null;
 
   const [name, setName] = useState(profile.displayName);
   const [permission, setPermission] = useState<Location.LocationPermissionResponse | null>(null);
+  const [alerts, setAlerts] = useState<AlertPermission | null>(null);
+  const [exactTiming, setExactTiming] = useState<boolean | null>(null);
 
-  // Re-check permission whenever the tab is shown: it may have changed in system settings.
+  // Re-check permissions whenever the tab is shown: they may have changed in system settings.
   useFocusEffect(
     useCallback(() => {
       Location.getForegroundPermissionsAsync().then(setPermission);
+      getAlertPermission().then(setAlerts);
+      hasExactTiming().then(setExactTiming);
     }, []),
   );
+
+  const reminderDays = parseReminderDays(profile.reminderDays);
+
+  /** Saves the reminder settings and reschedules the notifications to match. */
+  const applyReminders = (days: number[], minutes: number) => {
+    update({ reminderDays: formatReminderDays(days), reminderMinutes: minutes });
+    syncReminders(days, minutes).catch((error: unknown) =>
+      console.warn('[reminders] could not schedule', error),
+    );
+  };
+
+  const handleAlertsPress = async () => {
+    if (alerts === 'blocked') {
+      await Linking.openSettings();
+      return;
+    }
+    const result = await requestAlertPermission();
+    setAlerts(result);
+    if (result === 'granted') {
+      applyReminders(reminderDays, profile.reminderMinutes);
+    }
+  };
+
+  const handleDayPress = async (day: number) => {
+    const next = toggleDay(reminderDays, day);
+    // Adding a day is the moment to ask for notification permission.
+    if (next.length > reminderDays.length && alerts === 'undetermined') {
+      setAlerts(await requestAlertPermission());
+    }
+    applyReminders(next, profile.reminderMinutes);
+  };
+
+  const handleExactTimingPress = async () => {
+    // Opens the system "Alarms & reminders" page for LiveFit.
+    setExactTiming(await requestExactTiming());
+  };
 
   const saveName = () => {
     const trimmed = name.trim();
@@ -169,6 +237,113 @@ export default function ProfileScreen() {
       </Card>
 
       <Card>
+        <AppText variant="label" tone="muted">
+          Weekly goal
+        </AppText>
+        <Stepper
+          accessibilityLabel="Weekly goal"
+          value={profile.weeklyGoal}
+          min={1}
+          max={7}
+          format={formatWorkoutCount}
+          onChange={(weeklyGoal) => update({ weeklyGoal })}
+        />
+        <AppText variant="caption" tone="muted">
+          Your streak counts the weeks in a row with at least this many workouts.
+        </AppText>
+      </Card>
+
+      <Card>
+        <AppText variant="label" tone="muted">
+          Runs and walks
+        </AppText>
+        <SwitchRow
+          title="Auto-pause"
+          subtitle="Stops the clock while you're standing still"
+          value={profile.autoPause}
+          onValueChange={(autoPause) => update({ autoPause })}
+        />
+        <SwitchRow
+          title="Voice cues"
+          subtitle={`Spoken time and pace at every ${profile.distanceUnit === 'km' ? 'kilometre' : 'mile'} and lap`}
+          value={profile.voiceCues}
+          onValueChange={(voiceCues) => update({ voiceCues })}
+        />
+      </Card>
+
+      <Card>
+        <AppText variant="label" tone="muted">
+          Workout reminders
+        </AppText>
+        <View style={styles.days}>
+          {WEEKDAYS.map((weekday) => (
+            <Chip
+              key={weekday.day}
+              label={weekday.short}
+              accessibilityLabel={weekday.name}
+              selected={reminderDays.includes(weekday.day)}
+              onPress={() => handleDayPress(weekday.day)}
+            />
+          ))}
+        </View>
+        {reminderDays.length > 0 && (
+          <Stepper
+            accessibilityLabel="Reminder time"
+            value={profile.reminderMinutes}
+            min={5 * 60}
+            max={23 * 60}
+            step={15}
+            format={formatClock}
+            onChange={(minutes) => applyReminders(reminderDays, minutes)}
+          />
+        )}
+        <AppText variant="caption" tone="muted">
+          {reminderDays.length > 0
+            ? `${describeReminders(reminderDays, profile.reminderMinutes)}.`
+            : 'Pick the days you want a nudge to work out.'}
+        </AppText>
+        {reminderDays.length > 0 && alerts !== null && alerts !== 'granted' && (
+          <ListRow
+            icon="notifications-off-outline"
+            title="Notifications are off"
+            subtitle="Reminders can't appear until they're allowed"
+            onPress={handleAlertsPress}
+          />
+        )}
+      </Card>
+
+      <Card>
+        <AppText variant="label" tone="muted">
+          Rest between sets
+        </AppText>
+        <Stepper
+          accessibilityLabel="Rest between sets"
+          value={profile.restSeconds}
+          min={15}
+          max={300}
+          step={15}
+          format={formatSeconds}
+          onChange={(restSeconds) => update({ restSeconds })}
+        />
+        <ListRow
+          icon="notifications-outline"
+          title="Rest alerts"
+          subtitle="A notification when your rest is over"
+          value={alerts ? ALERT_PERMISSION_LABEL[alerts] : undefined}
+          onPress={alerts === 'granted' ? undefined : handleAlertsPress}
+        />
+        {Platform.OS === 'android' && alerts === 'granted' && exactTiming === false && (
+          <ListRow
+            icon="alarm-outline"
+            title="Alert exactly on time"
+            subtitle="Allow “Alarms & reminders”, or alerts may come a little late"
+            value="Off"
+            onPress={handleExactTimingPress}
+          />
+        )}
+      </Card>
+
+      <Card>
         <ListRow
           icon="navigate-outline"
           title="Location"
@@ -223,6 +398,11 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     color: colors.textOnAccent,
+  },
+  days: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   version: {
     textAlign: 'center',
